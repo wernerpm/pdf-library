@@ -39,6 +39,9 @@ dependencies {
     // JSON handling
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
 
+    // DateTime handling
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.4.1")
+
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
