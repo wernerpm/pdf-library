@@ -3,7 +3,8 @@
     "allow": [
       "Bash(mkdir:*)",
       "Bash(./gradlew:*)",
-      "Bash(gradle:*)"
+      "Bash(gradle:*)",
+      "Bash(timeout 10s gradle run)"
     ],
     "deny": [],
     "ask": []
