@@ -45,11 +45,14 @@ class PDFScanner(
 
         val result = ScanResult(
             discoveredFiles = uniqueFiles,
+            extractedMetadata = emptyList(),
             totalFilesScanned = totalFilesScanned,
             totalDirectoriesScanned = totalDirectoriesScanned,
             duplicatesRemoved = duplicatesRemoved,
             invalidFilesSkipped = invalidFilesSkipped,
+            metadataExtractionErrors = 0,
             scanDuration = scanDuration,
+            extractionDuration = null,
             errors = errors
         )
 
@@ -100,7 +103,18 @@ class PDFScanner(
             if (!storageProvider.exists(path)) {
                 val error = ScanError(path, "Path does not exist", Clock.System.now())
                 errors.add(error)
-                return ScanResult(emptyList(), 0, 0, 0, 0, kotlin.time.Duration.ZERO, listOf(error))
+                return ScanResult(
+                    discoveredFiles = emptyList(),
+                    extractedMetadata = emptyList(),
+                    totalFilesScanned = 0,
+                    totalDirectoriesScanned = 0,
+                    duplicatesRemoved = 0,
+                    invalidFilesSkipped = 0,
+                    metadataExtractionErrors = 0,
+                    scanDuration = kotlin.time.Duration.ZERO,
+                    extractionDuration = null,
+                    errors = listOf(error)
+                )
             }
 
             progressListener?.onDirectoryStarted(path)
@@ -160,11 +174,14 @@ class PDFScanner(
 
         return ScanResult(
             discoveredFiles = discoveredFiles,
+            extractedMetadata = emptyList(),
             totalFilesScanned = totalFilesScanned,
             totalDirectoriesScanned = totalDirectoriesScanned,
             duplicatesRemoved = 0,
             invalidFilesSkipped = invalidFilesSkipped,
+            metadataExtractionErrors = 0,
             scanDuration = kotlin.time.Duration.ZERO,
+            extractionDuration = null,
             errors = errors
         )
     }

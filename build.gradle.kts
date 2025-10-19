@@ -33,6 +33,9 @@ dependencies {
     // Image processing for thumbnails
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
 
+    // For hashing
+    implementation("commons-codec:commons-codec:1.16.0")
+
     // Logging
     implementation("ch.qos.logback:logback-classic:1.4.11")
 
