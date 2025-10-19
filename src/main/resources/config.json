@@ -1,0 +1,13 @@
+{
+  "pdfScanPaths": [
+    "~/Documents/PDFs",
+    "~/Downloads"
+  ],
+  "metadataStoragePath": "~/.pdf-library/metadata",
+  "scanning": {
+    "recursive": true,
+    "maxDepth": 50,
+    "excludePatterns": [".*", "temp*", "*.tmp"],
+    "fileExtensions": [".pdf"]
+  }
+}

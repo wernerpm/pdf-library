@@ -1,0 +1,12 @@
+{
+    "pdfScanPaths": [
+        "/test/path"
+    ],
+    "metadataStoragePath": "/test/metadata",
+    "scanning": {
+        "maxDepth": 25,
+        "excludePatterns": [
+            "*.tmp"
+        ]
+    }
+}
