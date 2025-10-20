@@ -191,12 +191,6 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
         if (path.contains("..")) {
             throw StorageException("Path traversal not allowed: $path")
         }
-
-        // Additional security checks
-        val resolvedPath = Paths.get(path).toAbsolutePath().normalize()
-        if (!resolvedPath.startsWith(basePathNormalized)) {
-            throw StorageException("Path outside base directory not allowed: $path")
-        }
     }
 
     private fun resolvePath(path: String): Path {
