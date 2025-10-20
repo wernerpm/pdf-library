@@ -1,8 +1,8 @@
 {
     "pdfScanPaths": [
-        "/test/path"
+      "~/.pdf-library/books"
     ],
-    "metadataStoragePath": "/test/metadata",
+    "metadataStoragePath": "~/.pdf-library/metadata",
     "scanning": {
         "maxDepth": 25,
         "excludePatterns": [

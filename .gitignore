@@ -79,6 +79,9 @@ $RECYCLE.BIN/
 *~
 
 # Application specific
+# Configuration (use config.json.base as template)
+config.json
+
 # SQLite databases (keep structure, ignore data)
 *.db
 *.sqlite
