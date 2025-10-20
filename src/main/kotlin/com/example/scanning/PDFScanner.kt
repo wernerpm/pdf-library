@@ -194,7 +194,34 @@ class PDFScanner(
 
     private fun shouldExclude(fileName: String): Boolean {
         return configuration.scanning.excludePatterns.any { pattern ->
-            fileName.matches(Regex(pattern))
+            fileName.matches(globToRegex(pattern))
         }
+    }
+
+    private fun globToRegex(glob: String): Regex {
+        val regex = buildString {
+            append("^")
+            for (char in glob) {
+                when (char) {
+                    '*' -> append(".*")
+                    '?' -> append(".")
+                    '.' -> append("\\.")
+                    '\\' -> append("\\\\")
+                    '+' -> append("\\+")
+                    '(' -> append("\\(")
+                    ')' -> append("\\)")
+                    '[' -> append("\\[")
+                    ']' -> append("\\]")
+                    '{' -> append("\\{")
+                    '}' -> append("\\}")
+                    '^' -> append("\\^")
+                    '$' -> append("\\$")
+                    '|' -> append("\\|")
+                    else -> append(char)
+                }
+            }
+            append("$")
+        }
+        return Regex(regex)
     }
 }

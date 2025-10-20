@@ -52,12 +52,16 @@ fun Application.configureApplication() {
             logger.info("Configuration loaded: ${config.pdfScanPaths.size} scan paths configured")
 
             // Initialize storage
-            val storage = FileSystemStorage(config.metadataStoragePath)
-            logger.info("Storage initialized at: ${config.metadataStoragePath}")
+            val metadataStorage = FileSystemStorage(config.metadataStoragePath)
+            logger.info("Metadata storage initialized at: ${config.metadataStoragePath}")
+
+            // Initialize PDF file storage (unrestricted for scanning)
+            val pdfStorage = FileSystemStorage("/")
+            logger.info("PDF storage initialized for filesystem scanning")
 
             // Initialize repository system
-            val persistenceManager = JsonPersistenceManager(storage, config.metadataStoragePath)
-            repository = InMemoryMetadataRepository(storage, config)
+            val persistenceManager = JsonPersistenceManager(metadataStorage, config.metadataStoragePath)
+            repository = InMemoryMetadataRepository(metadataStorage, config)
             val consistencyManager = ConsistencyManager(repository as InMemoryMetadataRepository, persistenceManager)
             repositoryManager = RepositoryManager(repository as InMemoryMetadataRepository, consistencyManager)
 
@@ -72,8 +76,8 @@ fun Application.configureApplication() {
                 }
             }
 
-            // Initialize sync service
-            syncService = SyncService(storage, config, repository)
+            // Initialize sync service (use pdfStorage for scanning, metadataStorage for metadata)
+            syncService = SyncService(pdfStorage, config, repository)
             logger.info("Sync service initialized")
 
             // Perform initial sync

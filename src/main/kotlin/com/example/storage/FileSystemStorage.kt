@@ -35,7 +35,6 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
     override suspend fun read(path: String): ByteArray = withContext(Dispatchers.IO) {
         try {
             val resolvedPath = resolvePath(path)
-            validatePath(resolvedPath.toString())
 
             if (!resolvedPath.exists()) {
                 throw StorageException("File not found: $path")
@@ -56,7 +55,6 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
     override suspend fun write(path: String, data: ByteArray): Unit = withContext(Dispatchers.IO) {
         try {
             val resolvedPath = resolvePath(path)
-            validatePath(resolvedPath.toString())
 
             // Create parent directories if they don't exist
             resolvedPath.parent?.let { parentPath ->
@@ -89,7 +87,6 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
     override suspend fun list(path: String): List<String> = withContext(Dispatchers.IO) {
         try {
             val resolvedPath = resolvePath(path)
-            validatePath(resolvedPath.toString())
 
             if (!resolvedPath.exists()) {
                 throw StorageException("Directory not found: $path")
@@ -114,7 +111,6 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
     override suspend fun delete(path: String): Unit = withContext(Dispatchers.IO) {
         try {
             val resolvedPath = resolvePath(path)
-            validatePath(resolvedPath.toString())
 
             if (!resolvedPath.exists()) {
                 return@withContext // Already deleted
@@ -146,7 +142,6 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
     override suspend fun getMetadata(path: String): FileMetadata = withContext(Dispatchers.IO) {
         try {
             val resolvedPath = resolvePath(path)
-            validatePath(resolvedPath.toString())
 
             if (!resolvedPath.exists()) {
                 throw StorageException("File not found: $path")
@@ -171,7 +166,6 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
     override suspend fun createDirectory(path: String): Unit = withContext(Dispatchers.IO) {
         try {
             val resolvedPath = resolvePath(path)
-            validatePath(resolvedPath.toString())
 
             if (resolvedPath.exists() && !resolvedPath.isDirectory()) {
                 throw StorageException("Path exists but is not a directory: $path")
@@ -187,17 +181,20 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
         }
     }
 
-    private fun validatePath(path: String) {
-        if (path.contains("..")) {
-            throw StorageException("Path traversal not allowed: $path")
+    private fun validatePath(resolvedPath: Path) {
+        val normalized = resolvedPath.toAbsolutePath().normalize()
+        if (!normalized.startsWith(basePathNormalized)) {
+            throw StorageException("Path is outside base directory: $resolvedPath")
         }
     }
 
     private fun resolvePath(path: String): Path {
-        return if (Paths.get(path).isAbsolute) {
+        val resolved = if (Paths.get(path).isAbsolute) {
             Paths.get(path).normalize()
         } else {
             basePathNormalized.resolve(path).normalize()
         }
+        validatePath(resolved)
+        return resolved
     }
 }
