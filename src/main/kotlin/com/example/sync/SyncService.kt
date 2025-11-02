@@ -22,53 +22,76 @@ class SyncService(
     private val repository: MetadataRepository
 ) {
     private val logger = LoggerFactory.getLogger(SyncService::class.java)
-    private val scanner = PDFScanner(storageProvider, configuration)
-    private val metadataExtractor = MetadataExtractor(storageProvider)
-    private val batchExtractor = BatchMetadataExtractor(metadataExtractor)
+    private val scanner = PDFScanner(storageProvider, configuration, repository)
+
+    @Volatile
+    private var syncInProgress = false
+
+    /**
+     * Register a progress listener to receive scanning events
+     */
+    fun addProgressListener(listener: ScanProgressListener) {
+        scanner.addListener(listener)
+    }
+
+    /**
+     * Remove a previously registered listener
+     */
+    fun removeProgressListener(listener: ScanProgressListener) {
+        scanner.removeListener(listener)
+    }
+
+    /**
+     * Clear all registered listeners
+     */
+    fun clearProgressListeners() {
+        scanner.clearListeners()
+    }
+
+    /**
+     * Check if a sync operation is currently in progress
+     */
+    fun isSyncInProgress(): Boolean = syncInProgress
+
+    /**
+     * Mark sync as started. Returns false if sync is already in progress.
+     */
+    private fun syncStart(): Boolean {
+        synchronized(this) {
+            if (syncInProgress) {
+                return false
+            }
+            syncInProgress = true
+            return true
+        }
+    }
+
+    /**
+     * Mark sync as finished
+     */
+    private fun syncFinish() {
+        synchronized(this) {
+            syncInProgress = false
+        }
+    }
 
     suspend fun performFullSync(): SyncResult {
+        // Check if sync is already in progress
+        if (!syncStart()) {
+            logger.warn("Full sync requested but sync is already in progress")
+            return SyncResult.alreadyInProgress(SyncType.FULL)
+        }
+
         logger.info("Starting full sync process...")
         val startTime = Clock.System.now()
 
         return try {
-            // Step 1: Scan for PDF files
-            logger.info("Scanning for PDF files...")
-            val scanResult = scanner.scanForPDFs()
-            logger.info("Scan completed: ${scanResult.discoveredFiles.size} files found")
+            // Scanner now handles scanning, extraction, and persistence all in one
+            logger.info("Scanning for PDFs and extracting metadata...")
+            val scanResult = scanner.scanAndPersist()
 
-            // Step 2: Extract metadata for discovered files
-            logger.info("Extracting metadata from ${scanResult.discoveredFiles.size} files...")
-            val extractedMetadata = batchExtractor.extractBatch(scanResult.discoveredFiles)
-            logger.info("Metadata extraction completed: ${extractedMetadata.size} files processed")
-
-            // Step 3: Store metadata in repository
-            logger.info("Storing metadata in repository...")
-            var storedCount = 0
-            var skippedCount = 0
-            val errors = mutableListOf<SyncError>()
-
-            for (metadata in extractedMetadata) {
-                try {
-                    // Check if we already have this file (by path)
-                    val existing = repository.getAllPDFs().find { it.path == metadata.path }
-                    if (existing == null || existing.contentHash != metadata.contentHash) {
-                        repository.savePDF(metadata)
-                        storedCount++
-                        logger.debug("Stored metadata for: ${metadata.fileName}")
-                    } else {
-                        skippedCount++
-                        logger.debug("Skipped unchanged file: ${metadata.fileName}")
-                    }
-                } catch (e: Exception) {
-                    val error = SyncError(
-                        path = metadata.path,
-                        message = "Failed to store metadata: ${e.message}",
-                        timestamp = Clock.System.now()
-                    )
-                    errors.add(error)
-                    logger.error("Failed to store metadata for ${metadata.path}", e)
-                }
-            }
+            logger.info("Full sync completed: ${scanResult.discoveredFiles.size} files found, " +
+                    "${scanResult.extractedMetadata.size} metadata extracted and persisted")
 
             val duration = Clock.System.now() - startTime
 
@@ -76,15 +99,15 @@ class SyncService(
                 syncType = SyncType.FULL,
                 filesScanned = scanResult.totalFilesScanned,
                 filesDiscovered = scanResult.discoveredFiles.size,
-                metadataExtracted = extractedMetadata.size,
-                metadataStored = storedCount,
-                metadataSkipped = skippedCount,
+                metadataExtracted = scanResult.extractedMetadata.size,
+                metadataStored = scanResult.extractedMetadata.size, // All extracted metadata is persisted
+                metadataSkipped = 0, // No skipping in full sync with new approach
                 duplicatesRemoved = scanResult.duplicatesRemoved,
-                totalErrors = scanResult.errors.size + errors.size,
+                totalErrors = scanResult.errors.size + scanResult.metadataExtractionErrors,
                 scanDuration = scanResult.scanDuration,
                 extractionDuration = scanResult.extractionDuration ?: Duration.ZERO,
                 syncDuration = duration,
-                errors = errors,
+                errors = scanResult.errors.map { SyncError(it.path, it.error, it.timestamp) },
                 startTime = startTime,
                 endTime = Clock.System.now()
             )
@@ -99,69 +122,29 @@ class SyncService(
                 startTime = startTime,
                 error = e
             )
+        } finally {
+            syncFinish()
         }
     }
 
     suspend fun performIncrementalSync(): SyncResult {
+        // Check if sync is already in progress
+        if (!syncStart()) {
+            logger.warn("Incremental sync requested but sync is already in progress")
+            return SyncResult.alreadyInProgress(SyncType.INCREMENTAL)
+        }
+
         logger.info("Starting incremental sync process...")
         val startTime = Clock.System.now()
 
         return try {
-            // For incremental sync, we check modification times
-            val scanResult = scanner.scanForPDFs()
-            val existingFiles = repository.getAllPDFs().associateBy { it.path }
+            // For incremental sync, we use the same scanAndPersist approach
+            // The repository layer can handle duplicate detection via content hashes
+            logger.info("Scanning for PDFs and extracting metadata...")
+            val scanResult = scanner.scanAndPersist()
 
-            // Find new or modified files
-            val filesToProcess = scanResult.discoveredFiles.filter { fileInfo ->
-                val existing = existingFiles[fileInfo.path]
-                existing == null ||
-                (fileInfo.lastModified != null && fileInfo.lastModified!! > existing.indexedAt)
-            }
-
-            logger.info("Found ${filesToProcess.size} new/modified files to process")
-
-            if (filesToProcess.isEmpty()) {
-                val duration = Clock.System.now() - startTime
-                return SyncResult(
-                    syncType = SyncType.INCREMENTAL,
-                    filesScanned = scanResult.totalFilesScanned,
-                    filesDiscovered = scanResult.discoveredFiles.size,
-                    metadataExtracted = 0,
-                    metadataStored = 0,
-                    metadataSkipped = scanResult.discoveredFiles.size,
-                    duplicatesRemoved = 0,
-                    totalErrors = 0,
-                    scanDuration = scanResult.scanDuration,
-                    extractionDuration = Duration.ZERO,
-                    syncDuration = duration,
-                    errors = emptyList(),
-                    startTime = startTime,
-                    endTime = Clock.System.now()
-                )
-            }
-
-            // Extract metadata for new/modified files
-            val extractedMetadata = batchExtractor.extractBatch(filesToProcess)
-
-            // Store metadata
-            var storedCount = 0
-            val errors = mutableListOf<SyncError>()
-
-            for (metadata in extractedMetadata) {
-                try {
-                    repository.savePDF(metadata)
-                    storedCount++
-                    logger.debug("Updated metadata for: ${metadata.fileName}")
-                } catch (e: Exception) {
-                    val error = SyncError(
-                        path = metadata.path,
-                        message = "Failed to store metadata: ${e.message}",
-                        timestamp = Clock.System.now()
-                    )
-                    errors.add(error)
-                    logger.error("Failed to store metadata for ${metadata.path}", e)
-                }
-            }
+            logger.info("Incremental sync completed: ${scanResult.discoveredFiles.size} files found, " +
+                    "${scanResult.extractedMetadata.size} metadata extracted and persisted")
 
             val duration = Clock.System.now() - startTime
 
@@ -169,15 +152,15 @@ class SyncService(
                 syncType = SyncType.INCREMENTAL,
                 filesScanned = scanResult.totalFilesScanned,
                 filesDiscovered = scanResult.discoveredFiles.size,
-                metadataExtracted = extractedMetadata.size,
-                metadataStored = storedCount,
-                metadataSkipped = scanResult.discoveredFiles.size - filesToProcess.size,
+                metadataExtracted = scanResult.extractedMetadata.size,
+                metadataStored = scanResult.extractedMetadata.size,
+                metadataSkipped = 0,
                 duplicatesRemoved = scanResult.duplicatesRemoved,
-                totalErrors = errors.size,
+                totalErrors = scanResult.errors.size + scanResult.metadataExtractionErrors,
                 scanDuration = scanResult.scanDuration,
                 extractionDuration = scanResult.extractionDuration ?: Duration.ZERO,
                 syncDuration = duration,
-                errors = errors,
+                errors = scanResult.errors.map { SyncError(it.path, it.error, it.timestamp) },
                 startTime = startTime,
                 endTime = Clock.System.now()
             )
@@ -192,6 +175,8 @@ class SyncService(
                 startTime = startTime,
                 error = e
             )
+        } finally {
+            syncFinish()
         }
     }
 
@@ -201,45 +186,28 @@ class SyncService(
         try {
             emit(SyncProgress.ScanningStarted())
 
-            val progressListener = object : ScanProgressListener {
+            val progressListener = object : com.example.scanning.ScanProgressListener {
                 override fun onDirectoryStarted(path: String) {
-                    // Can emit directory progress if needed
+                    // Directory progress is handled internally by RepositoryProgressListener
                 }
 
                 override fun onFileDiscovered(file: com.example.scanning.PDFFileInfo) {
-                    // Can emit file discovery progress if needed
+                    // Could emit file discovery progress if needed in the future
                 }
 
                 override fun onError(error: com.example.scanning.ScanError) {
-                    // Can emit scan errors if needed
+                    // Could emit scan errors if needed
                 }
 
-                override fun onScanCompleted(result: ScanResult) {
-                    // This will be handled after the scan completes
-                }
-            }
-
-            val scanResult = scanner.scanForPDFs(progressListener)
-
-            emit(SyncProgress.ExtractionStarted(scanResult.discoveredFiles.size))
-
-            val extractedMetadata = batchExtractor.extractBatch(scanResult.discoveredFiles)
-
-            emit(SyncProgress.ExtractionCompleted(extractedMetadata.size))
-            emit(SyncProgress.StoringStarted(extractedMetadata.size))
-
-            var storedCount = 0
-            for (metadata in extractedMetadata) {
-                try {
-                    repository.savePDF(metadata)
-                    storedCount++
-                    emit(SyncProgress.MetadataStored(metadata.fileName, storedCount, extractedMetadata.size))
-                } catch (e: Exception) {
-                    emit(SyncProgress.Error("Failed to store ${metadata.fileName}: ${e.message}"))
+                override fun onScanCompleted(result: com.example.scanning.ScanResult) {
+                    // Scan completion is handled below
                 }
             }
 
-            emit(SyncProgress.Completed(storedCount, Clock.System.now()))
+            // Scanner now handles scanning, extraction, and persistence
+            val scanResult = scanner.scanAndPersist(progressListener)
+
+            emit(SyncProgress.Completed(scanResult.extractedMetadata.size, Clock.System.now()))
 
         } catch (e: Exception) {
             emit(SyncProgress.Failed(e.message ?: "Unknown error", Clock.System.now()))
@@ -289,6 +257,26 @@ data class SyncResult(
                 errors = listOf(SyncError("SYNC_FAILED", error.message ?: "Unknown error", endTime)),
                 startTime = startTime,
                 endTime = endTime
+            )
+        }
+
+        fun alreadyInProgress(syncType: SyncType): SyncResult {
+            val now = Clock.System.now()
+            return SyncResult(
+                syncType = syncType,
+                filesScanned = 0,
+                filesDiscovered = 0,
+                metadataExtracted = 0,
+                metadataStored = 0,
+                metadataSkipped = 0,
+                duplicatesRemoved = 0,
+                totalErrors = 1,
+                scanDuration = Duration.ZERO,
+                extractionDuration = Duration.ZERO,
+                syncDuration = Duration.ZERO,
+                errors = listOf(SyncError("SYNC_IN_PROGRESS", "A sync operation is already in progress", now)),
+                startTime = now,
+                endTime = now
             )
         }
     }

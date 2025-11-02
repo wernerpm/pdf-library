@@ -86,6 +86,10 @@ fun Application.configureApplication() {
             syncService = SyncService(pdfStorage, config, repository)
             logger.info("Sync service initialized")
 
+            // Register console progress listener
+            syncService.addProgressListener(com.example.scanning.ConsoleScanProgressListener())
+            logger.info("Console progress listener registered")
+
             // Perform initial sync
             logger.info("Starting initial sync...")
             val syncResult = syncService.performIncrementalSync()
@@ -108,9 +112,16 @@ fun Application.configureRouting() {
 
         get("/status") {
             try {
-                if (::repositoryManager.isInitialized) {
-                    val status = repositoryManager.getStatus()
-                    call.respond(HttpStatusCode.OK, ApiResponse.success(status))
+                if (::repositoryManager.isInitialized && ::syncService.isInitialized) {
+                    val repositoryStatus = repositoryManager.getStatus()
+                    val syncInProgress = syncService.isSyncInProgress()
+
+                    val systemStatus = SystemStatus(
+                        repository = repositoryStatus,
+                        syncInProgress = syncInProgress
+                    )
+
+                    call.respond(HttpStatusCode.OK, ApiResponse.success(systemStatus))
                 } else {
                     call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
                 }
@@ -251,4 +262,10 @@ data class PaginatedResponse<T>(
     val size: Int,
     val total: Int,
     val totalPages: Int
+)
+
+@Serializable
+data class SystemStatus(
+    val repository: com.example.repository.RepositoryStatus,
+    val syncInProgress: Boolean
 )

@@ -212,12 +212,14 @@ data class BackupData(
     val totalRecords: Int
 )
 
+@Serializable
 data class RepositoryMetrics(
     val totalRecords: Long,
     val averageSearchTime: Duration,
     val lastPersistTime: Instant?
 )
 
+@Serializable
 data class RepositoryStatus(
     val isInitialized: Boolean,
     val initializationTime: Instant?,

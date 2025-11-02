@@ -9,10 +9,34 @@ import kotlin.time.measureTime
 
 class PDFScanner(
     private val storageProvider: StorageProvider,
-    private val configuration: AppConfiguration
+    private val configuration: AppConfiguration,
+    private val repository: com.example.repository.MetadataRepository? = null
 ) {
     private val validator = PDFValidator(storageProvider)
     private val duplicateDetector = DuplicateDetector()
+    private val metadataExtractor = com.example.metadata.MetadataExtractor(storageProvider)
+    private val progressListeners = mutableListOf<ScanProgressListener>()
+
+    /**
+     * Register a progress listener to receive scanning events
+     */
+    fun addListener(listener: ScanProgressListener) {
+        progressListeners.add(listener)
+    }
+
+    /**
+     * Remove a previously registered listener
+     */
+    fun removeListener(listener: ScanProgressListener) {
+        progressListeners.remove(listener)
+    }
+
+    /**
+     * Clear all registered listeners
+     */
+    fun clearListeners() {
+        progressListeners.clear()
+    }
 
     suspend fun scanForPDFs(progressListener: ScanProgressListener? = null): ScanResult {
         val startTime = Clock.System.now()
@@ -223,5 +247,57 @@ class PDFScanner(
             append("$")
         }
         return Regex(regex)
+    }
+
+    /**
+     * Scan for PDFs and persist metadata to repository as directories are processed.
+     * This is the main controller method that combines scanning, extraction, and persistence.
+     */
+    suspend fun scanAndPersist(delegateListener: ScanProgressListener? = null): ScanResult {
+        val repo = repository ?: throw IllegalStateException("Repository not configured for scanAndPersist")
+
+        // Create a composite listener that notifies all registered listeners
+        val compositeListener = createCompositeListener(delegateListener)
+
+        // Create the repository progress listener that will handle extraction and persistence
+        val repositoryListener = RepositoryProgressListener(repo, metadataExtractor, compositeListener)
+
+        // Perform the scan with the repository listener
+        val scanResult = scanForPDFs(repositoryListener)
+
+        // Update the scan result with extraction and persistence metrics
+        return scanResult.copy(
+            extractedMetadata = repositoryListener.getExtractedMetadata(),
+            metadataExtractionErrors = repositoryListener.extractionErrors,
+            extractionDuration = scanResult.scanDuration // Approximate, as extraction happens during scan
+        )
+    }
+
+    /**
+     * Creates a composite listener that forwards events to all registered listeners
+     * plus an optional delegate listener
+     */
+    private fun createCompositeListener(delegateListener: ScanProgressListener?): ScanProgressListener {
+        return object : ScanProgressListener {
+            override fun onDirectoryStarted(path: String) {
+                progressListeners.forEach { it.onDirectoryStarted(path) }
+                delegateListener?.onDirectoryStarted(path)
+            }
+
+            override fun onFileDiscovered(file: PDFFileInfo) {
+                progressListeners.forEach { it.onFileDiscovered(file) }
+                delegateListener?.onFileDiscovered(file)
+            }
+
+            override fun onError(error: ScanError) {
+                progressListeners.forEach { it.onError(error) }
+                delegateListener?.onError(error)
+            }
+
+            override fun onScanCompleted(result: ScanResult) {
+                progressListeners.forEach { it.onScanCompleted(result) }
+                delegateListener?.onScanCompleted(result)
+            }
+        }
     }
 }
