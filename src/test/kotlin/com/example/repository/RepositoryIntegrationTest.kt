@@ -31,9 +31,10 @@ class RepositoryIntegrationTest {
             )
         )
 
-        val repository = InMemoryMetadataRepository(storage, config)
-        val persistenceManager = JsonPersistenceManager(storage, config.metadataStoragePath)
-        val consistencyManager = ConsistencyManager(repository, persistenceManager)
+        // Create repository with layered architecture
+        val jsonRepository = JsonRepository(storage, config.metadataStoragePath)
+        val repository = InMemoryMetadataRepository(jsonRepository)
+        val consistencyManager = ConsistencyManager(repository, jsonRepository)
         val repositoryManager = RepositoryManager(repository, consistencyManager)
 
         // Test data

@@ -59,11 +59,17 @@ fun Application.configureApplication() {
             val pdfStorage = FileSystemStorage("/")
             logger.info("PDF storage initialized for filesystem scanning")
 
-            // Initialize repository system
-            val persistenceManager = JsonPersistenceManager(metadataStorage, config.metadataStoragePath)
-            repository = InMemoryMetadataRepository(metadataStorage, config)
-            val consistencyManager = ConsistencyManager(repository as InMemoryMetadataRepository, persistenceManager)
-            repositoryManager = RepositoryManager(repository as InMemoryMetadataRepository, consistencyManager)
+            // Initialize repository system with layered architecture
+            // JsonRepository provides persistent storage
+            val jsonRepository = JsonRepository(metadataStorage, config.metadataStoragePath)
+
+            // InMemoryMetadataRepository provides caching layer on top of JsonRepository
+            val inMemoryRepository = InMemoryMetadataRepository(jsonRepository)
+            repository = inMemoryRepository
+
+            // ConsistencyManager monitors consistency between cache and backing store
+            val consistencyManager = ConsistencyManager(inMemoryRepository, jsonRepository)
+            repositoryManager = RepositoryManager(inMemoryRepository, consistencyManager)
 
             // Initialize repository
             val initResult = repositoryManager.initialize()

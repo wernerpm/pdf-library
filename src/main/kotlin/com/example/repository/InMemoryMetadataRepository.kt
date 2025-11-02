@@ -1,17 +1,18 @@
 package com.example.repository
 
-import com.example.config.AppConfiguration
 import com.example.metadata.PDFMetadata
-import com.example.storage.StorageProvider
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.jvm.JvmStatic
 
+/**
+ * In-memory caching implementation of MetadataRepository.
+ * Delegates persistence to a backing repository while maintaining fast in-memory access.
+ */
 class InMemoryMetadataRepository(
-    private val storageProvider: StorageProvider,
-    private val configuration: AppConfiguration
+    private val backingRepository: MetadataRepository
 ) : MetadataRepository {
 
     companion object {
@@ -25,7 +26,6 @@ class InMemoryMetadataRepository(
     private val titleIndex = ConcurrentHashMap<String, MutableSet<String>>() // title -> ids
     private val mutex = Mutex()
     private val searchEngine = SearchEngine()
-    private val persistenceManager = JsonPersistenceManager(storageProvider, configuration.metadataStoragePath)
 
     override suspend fun getAllPDFs(): List<PDFMetadata> {
         return cache.values.toList().sortedBy { it.fileName }
@@ -48,9 +48,9 @@ class InMemoryMetadataRepository(
             // Update indices
             updateIndices(metadata)
 
-            // Persist to storage
+            // Persist to backing storage
             try {
-                persistenceManager.saveMetadata(metadata)
+                backingRepository.savePDF(metadata)
             } catch (e: Exception) {
                 logger.error("Failed to persist metadata for ${metadata.id}, rolling back memory changes", e)
                 // Rollback cache changes
@@ -69,7 +69,7 @@ class InMemoryMetadataRepository(
             if (metadata != null) {
                 removeFromIndices(metadata)
                 try {
-                    persistenceManager.deleteMetadata(id)
+                    backingRepository.deletePDF(id)
                 } catch (e: Exception) {
                     logger.error("Failed to delete persisted metadata for $id", e)
                     // Re-add to cache since deletion failed
@@ -118,11 +118,11 @@ class InMemoryMetadataRepository(
 
     override suspend fun loadFromStorage() {
         mutex.withLock {
-            logger.info("Loading metadata from storage...")
+            logger.info("Loading metadata from backing storage...")
             cache.clear()
             clearIndices()
 
-            val loadedMetadata = persistenceManager.loadAllMetadata()
+            val loadedMetadata = backingRepository.getAllPDFs()
 
             for (metadata in loadedMetadata) {
                 cache[metadata.id] = metadata
@@ -134,13 +134,13 @@ class InMemoryMetadataRepository(
     }
 
     override suspend fun persistToStorage() {
-        logger.info("Persisting ${cache.size} metadata records to storage...")
+        logger.info("Persisting ${cache.size} metadata records to backing storage...")
         var successCount = 0
         var errorCount = 0
 
         for (metadata in cache.values) {
             try {
-                persistenceManager.saveMetadata(metadata)
+                backingRepository.savePDF(metadata)
                 successCount++
             } catch (e: Exception) {
                 logger.error("Failed to persist metadata for ${metadata.id}", e)

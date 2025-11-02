@@ -39,9 +39,9 @@ class SyncIntegrationDemo {
             println("📁 Test environment: $tempDir")
 
             // Initialize repository system (as done in Main.kt)
-            val persistenceManager = JsonPersistenceManager(storage, config.metadataStoragePath)
-            val repository = InMemoryMetadataRepository(storage, config)
-            val consistencyManager = ConsistencyManager(repository, persistenceManager)
+            val jsonRepository = JsonRepository(storage, config.metadataStoragePath)
+            val repository = InMemoryMetadataRepository(jsonRepository)
+            val consistencyManager = ConsistencyManager(repository, jsonRepository)
             val repositoryManager = RepositoryManager(repository, consistencyManager)
 
             println("\n⚙️ Initializing repository system...")

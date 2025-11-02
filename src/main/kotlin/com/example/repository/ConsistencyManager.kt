@@ -3,9 +3,13 @@ package com.example.repository
 import kotlinx.serialization.Serializable
 import kotlin.jvm.JvmStatic
 
+/**
+ * Manages consistency between in-memory cache and backing storage.
+ * Works with any MetadataRepository implementations.
+ */
 class ConsistencyManager(
-    private val repository: InMemoryMetadataRepository,
-    private val persistenceManager: JsonPersistenceManager
+    private val cachingRepository: InMemoryMetadataRepository,
+    private val backingRepository: MetadataRepository
 ) {
 
     companion object {
@@ -16,8 +20,8 @@ class ConsistencyManager(
     suspend fun performConsistencyCheck(): ConsistencyReport {
         logger.info("Starting consistency check...")
 
-        val memoryIds = repository.getAllPDFs().map { it.id }.toSet()
-        val persistedIds = persistenceManager.getAllMetadataIds()
+        val memoryIds = cachingRepository.getAllPDFs().map { it.id }.toSet()
+        val persistedIds = backingRepository.getAllPDFs().map { it.id }.toSet()
 
         val orphanedInMemory = memoryIds - persistedIds
         val orphanedOnDisk = persistedIds - memoryIds
@@ -43,8 +47,8 @@ class ConsistencyManager(
         // Persist orphaned in-memory data
         for (id in report.orphanedInMemory) {
             try {
-                repository.getPDF(id)?.let { metadata ->
-                    persistenceManager.saveMetadata(metadata)
+                cachingRepository.getPDF(id)?.let { metadata ->
+                    backingRepository.savePDF(metadata)
                     repairedInMemory++
                     logger.debug("Persisted orphaned in-memory metadata: $id")
                 }
@@ -58,8 +62,8 @@ class ConsistencyManager(
         // Load orphaned disk data
         for (id in report.orphanedOnDisk) {
             try {
-                persistenceManager.loadMetadata(id)?.let { metadata ->
-                    repository.savePDF(metadata)
+                backingRepository.getPDF(id)?.let { metadata ->
+                    cachingRepository.savePDF(metadata)
                     repairedOnDisk++
                     logger.debug("Loaded orphaned disk metadata: $id")
                 }
@@ -83,7 +87,7 @@ class ConsistencyManager(
     suspend fun validateDataIntegrity(): ValidationResult {
         logger.info("Starting data integrity validation...")
 
-        val allMetadata = repository.getAllPDFs()
+        val allMetadata = cachingRepository.getAllPDFs()
         val issues = mutableListOf<IntegrityIssue>()
 
         for (metadata in allMetadata) {

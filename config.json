@@ -1,6 +1,7 @@
 {
     "pdfScanPaths": [
-      "/opt/usr/pdf-library/books"
+      "/opt/usr/pdf-library/books",
+      "/Volumes/Public/Livros/"
     ],
     "metadataStoragePath": "/opt/usr/pdf-library/metadata",
     "scanning": {
