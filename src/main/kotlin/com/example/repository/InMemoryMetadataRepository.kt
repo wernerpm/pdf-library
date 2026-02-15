@@ -37,27 +37,15 @@ class InMemoryMetadataRepository(
 
     override suspend fun savePDF(metadata: PDFMetadata) {
         mutex.withLock {
-            // Remove old metadata from indices if updating
+            // Persist to backing storage first to avoid corrupt state on restart
+            backingRepository.savePDF(metadata)
+
+            // Only update cache after successful persistence
             cache[metadata.id]?.let { oldMetadata ->
                 removeFromIndices(oldMetadata)
             }
-
-            // Update cache
             cache[metadata.id] = metadata
-
-            // Update indices
             updateIndices(metadata)
-
-            // Persist to backing storage
-            try {
-                backingRepository.savePDF(metadata)
-            } catch (e: Exception) {
-                logger.error("Failed to persist metadata for ${metadata.id}, rolling back memory changes", e)
-                // Rollback cache changes
-                cache.remove(metadata.id)
-                removeFromIndices(metadata)
-                throw e
-            }
 
             logger.debug("Saved PDF metadata: ${metadata.id}")
         }
@@ -65,20 +53,16 @@ class InMemoryMetadataRepository(
 
     override suspend fun deletePDF(id: String) {
         mutex.withLock {
-            val metadata = cache.remove(id)
-            if (metadata != null) {
-                removeFromIndices(metadata)
-                try {
-                    backingRepository.deletePDF(id)
-                } catch (e: Exception) {
-                    logger.error("Failed to delete persisted metadata for $id", e)
-                    // Re-add to cache since deletion failed
-                    cache[id] = metadata
-                    updateIndices(metadata)
-                    throw e
-                }
-                logger.debug("Deleted PDF metadata: $id")
-            }
+            val metadata = cache[id] ?: return@withLock
+
+            // Delete from backing storage first
+            backingRepository.deletePDF(id)
+
+            // Only update cache after successful deletion
+            cache.remove(id)
+            removeFromIndices(metadata)
+
+            logger.debug("Deleted PDF metadata: $id")
         }
     }
 
