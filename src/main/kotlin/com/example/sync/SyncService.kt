@@ -187,19 +187,19 @@ class SyncService(
             emit(SyncProgress.ScanningStarted())
 
             val progressListener = object : com.example.scanning.ScanProgressListener {
-                override fun onDirectoryStarted(path: String) {
+                override suspend fun onDirectoryStarted(path: String) {
                     // Directory progress is handled internally by RepositoryProgressListener
                 }
 
-                override fun onFileDiscovered(file: com.example.scanning.PDFFileInfo) {
+                override suspend fun onFileDiscovered(file: com.example.scanning.PDFFileInfo) {
                     // Could emit file discovery progress if needed in the future
                 }
 
-                override fun onError(error: com.example.scanning.ScanError) {
+                override suspend fun onError(error: com.example.scanning.ScanError) {
                     // Could emit scan errors if needed
                 }
 
-                override fun onScanCompleted(result: com.example.scanning.ScanResult) {
+                override suspend fun onScanCompleted(result: com.example.scanning.ScanResult) {
                     // Scan completion is handled below
                 }
             }

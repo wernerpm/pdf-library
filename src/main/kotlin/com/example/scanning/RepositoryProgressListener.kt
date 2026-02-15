@@ -2,7 +2,6 @@ package com.example.scanning
 
 import com.example.metadata.MetadataExtractor
 import com.example.repository.MetadataRepository
-import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import kotlin.jvm.JvmStatic
 
@@ -34,7 +33,7 @@ class RepositoryProgressListener(
     var persistenceErrors = 0
         private set
 
-    override fun onDirectoryStarted(path: String) {
+    override suspend fun onDirectoryStarted(path: String) {
         // Flush the previous directory's files before starting a new one
         flushCurrentDirectory()
 
@@ -44,17 +43,17 @@ class RepositoryProgressListener(
         delegate?.onDirectoryStarted(path)
     }
 
-    override fun onFileDiscovered(file: PDFFileInfo) {
+    override suspend fun onFileDiscovered(file: PDFFileInfo) {
         // Buffer files for the current directory
         currentDirectoryFiles.add(file)
         delegate?.onFileDiscovered(file)
     }
 
-    override fun onError(error: ScanError) {
+    override suspend fun onError(error: ScanError) {
         delegate?.onError(error)
     }
 
-    override fun onScanCompleted(result: ScanResult) {
+    override suspend fun onScanCompleted(result: ScanResult) {
         // Flush any remaining files when scan completes
         flushCurrentDirectory()
 
@@ -63,7 +62,7 @@ class RepositoryProgressListener(
         delegate?.onScanCompleted(result)
     }
 
-    private fun flushCurrentDirectory() {
+    private suspend fun flushCurrentDirectory() {
         if (currentDirectoryFiles.isEmpty()) {
             return
         }
@@ -74,18 +73,14 @@ class RepositoryProgressListener(
         // Extract metadata for all files in the current directory
         for (fileInfo in currentDirectoryFiles) {
             try {
-                val metadata = runBlocking {
-                    metadataExtractor.extractMetadata(fileInfo)
-                }
+                val metadata = metadataExtractor.extractMetadata(fileInfo)
 
                 if (metadata != null) {
                     filesExtracted++
 
                     // Persist immediately after extraction
                     try {
-                        runBlocking {
-                            repository.savePDF(metadata)
-                        }
+                        repository.savePDF(metadata)
                         filesPersisted++
                         allExtractedMetadata.add(metadata)
                         logger.debug("Persisted metadata for: ${metadata.fileName}")

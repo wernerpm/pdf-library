@@ -310,22 +310,22 @@ class PDFScanner(
      */
     private fun createCompositeListener(delegateListener: ScanProgressListener?): ScanProgressListener {
         return object : ScanProgressListener {
-            override fun onDirectoryStarted(path: String) {
+            override suspend fun onDirectoryStarted(path: String) {
                 progressListeners.forEach { it.onDirectoryStarted(path) }
                 delegateListener?.onDirectoryStarted(path)
             }
 
-            override fun onFileDiscovered(file: PDFFileInfo) {
+            override suspend fun onFileDiscovered(file: PDFFileInfo) {
                 progressListeners.forEach { it.onFileDiscovered(file) }
                 delegateListener?.onFileDiscovered(file)
             }
 
-            override fun onError(error: ScanError) {
+            override suspend fun onError(error: ScanError) {
                 progressListeners.forEach { it.onError(error) }
                 delegateListener?.onError(error)
             }
 
-            override fun onScanCompleted(result: ScanResult) {
+            override suspend fun onScanCompleted(result: ScanResult) {
                 progressListeners.forEach { it.onScanCompleted(result) }
                 delegateListener?.onScanCompleted(result)
             }
