@@ -156,8 +156,8 @@ fun Application.configureRouting() {
                     call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
                     return@get
                 }
-                val page = call.request.queryParameters["page"]?.toIntOrNull() ?: 0
-                val size = call.request.queryParameters["size"]?.toIntOrNull() ?: 50
+                val page = (call.request.queryParameters["page"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
+                val size = (call.request.queryParameters["size"]?.toIntOrNull() ?: 50).coerceIn(1, 500)
                 val query = call.request.queryParameters["q"]
 
                 val allPdfs = if (query.isNullOrBlank()) {
