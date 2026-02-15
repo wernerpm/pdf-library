@@ -36,15 +36,14 @@ class CustomPropertiesExtractor {
     private fun extractXMPProperties(metadata: PDMetadata): Map<String, String> {
         val properties = mutableMapOf<String, String>()
         try {
-            // Basic XMP extraction - can be expanded for more sophisticated parsing
-            val metadataStream = metadata.createInputStream()
-            val xmpContent = metadataStream.readBytes().toString(Charsets.UTF_8)
-            metadataStream.close()
+            metadata.createInputStream().use { stream ->
+                val maxXmpSize = 10 * 1024 * 1024 // 10MB limit
+                val bytes = stream.readNBytes(maxXmpSize)
+                val xmpContent = bytes.toString(Charsets.UTF_8)
 
-            // Simple extraction of custom properties from XMP
-            // This is a basic implementation - could be enhanced with proper XMP parsing
-            if (xmpContent.isNotBlank()) {
-                properties["xmp_content_length"] = xmpContent.length.toString()
+                if (xmpContent.isNotBlank()) {
+                    properties["xmp_content_length"] = xmpContent.length.toString()
+                }
             }
         } catch (e: Exception) {
             logger.debug("Failed to extract XMP properties", e)
