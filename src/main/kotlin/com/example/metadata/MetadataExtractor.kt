@@ -4,6 +4,7 @@ import com.example.scanning.PDFFileInfo
 import com.example.storage.StorageProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.datetime.Clock
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
@@ -37,24 +38,33 @@ class MetadataExtractor(
         fileInfo: PDFFileInfo
     ): PDFMetadata? {
         return withContext(Dispatchers.IO) {
-            try {
-                val document = Loader.loadPDF(pdfBytes)
+            withTimeoutOrNull(PDF_PARSE_TIMEOUT_MS) {
                 try {
-                    buildPDFMetadata(document, fileInfo, pdfBytes)
-                } finally {
-                    document.close()
+                    val document = Loader.loadPDF(pdfBytes)
+                    try {
+                        buildPDFMetadata(document, fileInfo, pdfBytes)
+                    } finally {
+                        document.close()
+                    }
+                } catch (e: Exception) {
+                    logger.debug("Failed to load PDF, trying encrypted handler: ${fileInfo.path}", e)
+                    // Try to handle as encrypted PDF
+                    securePDFHandler.handleEncryptedPDF(
+                        pdfBytes,
+                        fileInfo.fileName,
+                        fileInfo.path,
+                        fileInfo.fileSize
+                    )
                 }
-            } catch (e: Exception) {
-                logger.debug("Failed to load PDF, trying encrypted handler: ${fileInfo.path}", e)
-                // Try to handle as encrypted PDF
-                securePDFHandler.handleEncryptedPDF(
-                    pdfBytes,
-                    fileInfo.fileName,
-                    fileInfo.path,
-                    fileInfo.fileSize
-                )
+            } ?: run {
+                logger.warn("PDF parsing timed out after ${PDF_PARSE_TIMEOUT_MS}ms for ${fileInfo.path}")
+                null
             }
         }
+    }
+
+    companion object {
+        private const val PDF_PARSE_TIMEOUT_MS = 60_000L // 60 seconds
     }
 
     private fun buildPDFMetadata(
