@@ -5,6 +5,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.nio.file.*
+import java.util.EnumSet
 import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import kotlin.io.path.*
@@ -117,15 +118,33 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
             }
 
             if (resolvedPath.isDirectory()) {
-                // Delete directory recursively
-                Files.walkFileTree(resolvedPath, object : SimpleFileVisitor<Path>() {
+                // Delete directory recursively, but don't follow symlinks outside base path
+                Files.walkFileTree(resolvedPath, EnumSet.noneOf(FileVisitOption::class.java), Int.MAX_VALUE, object : SimpleFileVisitor<Path>() {
                     override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
-                        Files.delete(file)
+                        val normalized = file.toAbsolutePath().normalize()
+                        if (normalized.startsWith(basePathNormalized)) {
+                            Files.delete(file)
+                        }
                         return FileVisitResult.CONTINUE
                     }
 
                     override fun postVisitDirectory(dir: Path, exc: IOException?): FileVisitResult {
-                        Files.delete(dir)
+                        val normalized = dir.toAbsolutePath().normalize()
+                        if (normalized.startsWith(basePathNormalized)) {
+                            Files.delete(dir)
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        // If this directory is a symlink pointing outside base, delete the link itself and skip
+                        if (Files.isSymbolicLink(dir)) {
+                            val normalized = dir.toRealPath().normalize()
+                            if (!normalized.startsWith(basePathNormalized)) {
+                                Files.delete(dir) // Deletes the symlink, not the target
+                                return FileVisitResult.SKIP_SUBTREE
+                            }
+                        }
                         return FileVisitResult.CONTINUE
                     }
                 })
