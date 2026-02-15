@@ -27,12 +27,12 @@ class InMemoryMetadataRepository(
     private val mutex = Mutex()
     private val searchEngine = SearchEngine()
 
-    override suspend fun getAllPDFs(): List<PDFMetadata> {
-        return cache.values.toList().sortedBy { it.fileName }
+    override suspend fun getAllPDFs(): List<PDFMetadata> = mutex.withLock {
+        cache.values.toList().sortedBy { it.fileName }
     }
 
-    override suspend fun getPDF(id: String): PDFMetadata? {
-        return cache[id]
+    override suspend fun getPDF(id: String): PDFMetadata? = mutex.withLock {
+        cache[id]
     }
 
     override suspend fun savePDF(metadata: PDFMetadata) {
@@ -82,38 +82,38 @@ class InMemoryMetadataRepository(
         }
     }
 
-    override suspend fun search(query: String): List<PDFMetadata> {
-        return searchEngine.searchByQuery(cache.values, query)
+    override suspend fun search(query: String): List<PDFMetadata> = mutex.withLock {
+        searchEngine.searchByQuery(cache.values, query)
     }
 
-    override suspend fun searchByProperty(key: String, value: String): List<PDFMetadata> {
-        return searchEngine.searchByProperty(cache.values, key, value)
+    override suspend fun searchByProperty(key: String, value: String): List<PDFMetadata> = mutex.withLock {
+        searchEngine.searchByProperty(cache.values, key, value)
     }
 
-    override suspend fun searchByAuthor(author: String): List<PDFMetadata> {
+    override suspend fun searchByAuthor(author: String): List<PDFMetadata> = mutex.withLock {
         val normalizedAuthor = author.lowercase()
         val matchingIds = authorIndex.entries
             .filter { it.key.contains(normalizedAuthor, ignoreCase = true) }
             .flatMap { it.value }
             .toSet()
 
-        return matchingIds.mapNotNull { cache[it] }
+        matchingIds.mapNotNull { cache[it] }
             .sortedBy { it.fileName }
     }
 
-    override suspend fun searchByTitle(title: String): List<PDFMetadata> {
+    override suspend fun searchByTitle(title: String): List<PDFMetadata> = mutex.withLock {
         val normalizedTitle = title.lowercase()
         val matchingIds = titleIndex.entries
             .filter { it.key.contains(normalizedTitle, ignoreCase = true) }
             .flatMap { it.value }
             .toSet()
 
-        return matchingIds.mapNotNull { cache[it] }
+        matchingIds.mapNotNull { cache[it] }
             .sortedBy { it.fileName }
     }
 
-    override suspend fun count(): Long {
-        return cache.size.toLong()
+    override suspend fun count(): Long = mutex.withLock {
+        cache.size.toLong()
     }
 
     override suspend fun loadFromStorage() {
@@ -133,7 +133,7 @@ class InMemoryMetadataRepository(
         }
     }
 
-    override suspend fun persistToStorage() {
+    override suspend fun persistToStorage() = mutex.withLock {
         logger.info("Persisting ${cache.size} metadata records to backing storage...")
         var successCount = 0
         var errorCount = 0
@@ -210,13 +210,13 @@ class InMemoryMetadataRepository(
         titleIndex.clear()
     }
 
-    fun getByPath(path: String): PDFMetadata? {
+    suspend fun getByPath(path: String): PDFMetadata? = mutex.withLock {
         val id = pathIndex[path]
-        return id?.let { cache[it] }
+        id?.let { cache[it] }
     }
 
-    fun getMemoryUsageInfo(): RepositoryMemoryInfo {
-        return RepositoryMemoryInfo(
+    suspend fun getMemoryUsageInfo(): RepositoryMemoryInfo = mutex.withLock {
+        RepositoryMemoryInfo(
             totalRecords = cache.size,
             pathIndexSize = pathIndex.size,
             authorIndexSize = authorIndex.size,
