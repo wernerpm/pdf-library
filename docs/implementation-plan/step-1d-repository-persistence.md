@@ -1,4 +1,6 @@
-# Step 1d: In-Memory Repository + JSON Persistence
+# Step 1d: In-Memory Repository + JSON Persistence - DONE
+
+> **Status**: Fully implemented. `InMemoryMetadataRepository` wraps a backing `JsonFileMetadataRepository` with `ConcurrentHashMap` cache + path/author/title indices. All methods are `mutex.withLock` protected. Uses persist-first ordering (backing store updated before cache). `SearchEngine` provides relevance-scored full-text search across metadata fields.
 
 ## Overview
 Implement the metadata repository system that provides fast in-memory operations with JSON file persistence, completing the core data layer.
@@ -403,7 +405,8 @@ After this step, you'll have:
 - Ready for API layer integration
 
 ## Next Steps
-With all Step 1 sub-steps complete, you can proceed to:
-- **Step 2**: Thumbnail generation using PDFBox
-- **Step 3**: REST API implementation with Ktor
-- **Step 4**: Sync service with incremental updates
+With all Step 1 sub-steps complete, the remaining work is:
+- **Step 2**: Thumbnail generation using PDFBox - NOT STARTED
+- **Step 3**: REST API implementation with Ktor - DONE
+- **Step 4**: Sync service with incremental updates - DONE
+- **Frontend UI**: Vanilla JavaScript web interface - NOT STARTED

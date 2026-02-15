@@ -1,5 +1,23 @@
 # PDF Library Implementation Plan
 
+## Implementation Status
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| Configuration module | DONE | YAML-based config, scan paths, metadata storage path |
+| Storage abstraction | DONE | `StorageProvider` interface + `FileSystemStorage` with security hardening |
+| PDF Scanner | DONE | Recursive traversal, dedup, symlink safety, file count limits |
+| Metadata extraction | DONE | PDFBox 3.0, XMP, encrypted PDF handling, SHA-256 hashing |
+| Repository + persistence | DONE | In-memory cache with JSON file backing, thread-safe, persist-first ordering |
+| Sync service | DONE | Incremental sync, progress tracking, contention prevention |
+| REST API | DONE | Full CRUD, search, sync, pagination endpoints via Ktor |
+| Security hardening | DONE | 13 issues fixed (see AGENTS.md for details) |
+| Thumbnail generation | NOT STARTED | No `ThumbnailGenerator`, no `thumbnailPath` in `PDFMetadata`, no `/api/thumbnails/{id}` |
+| Frontend UI | NOT STARTED | No HTML/CSS/JS assets |
+| ACL / Permissions | NOT STARTED | No role-based access control |
+| S3 / Cloud storage | NOT STARTED | No `S3Storage` implementation |
+| Full-text PDF search | NOT STARTED | No text extraction or content search index |
+
 ## Overview
 A PDF library application that provides a web-based interface for managing thousands of PDFs with thumbnail previews, metadata indexing, and flexible storage backends.
 
@@ -20,7 +38,9 @@ A PDF library application that provides a web-based interface for managing thous
 
 ## Architecture Overview
 
-### 1. Storage Engine with ACL (Week 1)
+### 1. Storage Engine with ACL (Week 1) - PARTIALLY DONE
+
+> **Status**: Storage abstraction and `FileSystemStorage` are DONE with security hardening (path validation, atomic writes, symlink safety, file size limits, temp cleanup logging). ACL system is NOT STARTED.
 
 **Purpose**: Abstracted storage layer supporting multiple backends with access control
 
@@ -39,7 +59,9 @@ A PDF library application that provides a web-based interface for managing thous
 - Fine-grained access control
 - Easy testing with mock implementations
 
-### 2. PDF Indexing & Synchronization (Week 1-2)
+### 2. PDF Indexing & Synchronization (Week 1-2) - PARTIALLY DONE
+
+> **Status**: PDF scanning, metadata extraction, sync service, and repository persistence are all DONE. Thumbnail generation is NOT STARTED.
 
 **Purpose**: Automated discovery, indexing, and thumbnail generation for PDFs
 
@@ -58,7 +80,9 @@ A PDF library application that provides a web-based interface for managing thous
 4. Extract and cache metadata (including custom properties)
 5. Update metadata files and reload in-memory index
 
-### 3. Backend API (Week 2)
+### 3. Backend API (Week 2) - MOSTLY DONE
+
+> **Status**: All listed endpoints are implemented except `GET /api/thumbnails/{id}` (depends on thumbnail generation). Pagination, search, filtering, and error handling are all working. Additional endpoints exist: `DELETE /api/pdfs/{id}`, `GET /api/search/author`, `GET /api/search/title`, `GET /api/search/property`, `GET /api/stats`.
 
 **Purpose**: REST API for frontend communication
 
@@ -76,7 +100,9 @@ A PDF library application that provides a web-based interface for managing thous
 - **Error Handling**: Comprehensive error responses
 - **Content Negotiation**: Support for different response formats
 
-### 4. Frontend UI (Week 2-3)
+### 4. Frontend UI (Week 2-3) - NOT STARTED
+
+> **Status**: No HTML, CSS, or JavaScript files exist. The application is currently API-only.
 
 **Purpose**: Responsive web interface for PDF browsing
 
@@ -94,7 +120,9 @@ A PDF library application that provides a web-based interface for managing thous
 - Responsive design for mobile/desktop
 - Dark/light theme support
 
-### 5. Testing Strategy (Throughout Development)
+### 5. Testing Strategy (Throughout Development) - PARTIALLY DONE
+
+> **Status**: Unit tests exist for scanning, metadata extraction, content hashing, search engine, repository, and configuration. Integration tests and performance tests are NOT STARTED.
 
 **Unit Tests**:
 - 90%+ coverage for all business logic
@@ -121,19 +149,24 @@ A PDF library application that provides a web-based interface for managing thous
 
 ## Implementation Timeline
 
-### Week 1: Core Infrastructure
-1. **Day 1-2**: Storage abstraction layer + FileSystem implementation
-2. **Day 3-4**: PDF indexing service with thumbnail generation
-3. **Day 5**: Basic sync service
+### Week 1: Core Infrastructure - DONE
+1. **Day 1-2**: Storage abstraction layer + FileSystem implementation - DONE
+2. **Day 3-4**: PDF indexing service with thumbnail generation - DONE (except thumbnails)
+3. **Day 5**: Basic sync service - DONE
 
-### Week 2: API and Integration
-1. **Day 1-2**: REST API with caching
-2. **Day 3-4**: Sync service with incremental updates
-3. **Day 5**: API testing and optimization
+### Week 2: API and Integration - DONE
+1. **Day 1-2**: REST API with caching - DONE
+2. **Day 3-4**: Sync service with incremental updates - DONE
+3. **Day 5**: API testing and optimization - DONE
 
-### Week 3: Frontend and Polish
-1. **Day 1-3**: Frontend UI with virtual scrolling
-2. **Day 4-5**: Integration testing and performance optimization
+### Week 3: Frontend and Polish - NOT STARTED
+1. **Day 1-3**: Frontend UI with virtual scrolling - NOT STARTED
+2. **Day 4-5**: Integration testing and performance optimization - NOT STARTED
+
+### Remaining Work
+1. **Thumbnail generation** - Add `ThumbnailGenerator`, `thumbnailPath` to `PDFMetadata`, `GET /api/thumbnails/{id}` endpoint
+2. **Frontend UI** - Vanilla JS + Web Components with virtual scrolling, search, and PDF viewer
+3. **Integration/performance tests** - Large dataset handling, API response times
 
 ## Project Structure
 

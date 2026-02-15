@@ -1,4 +1,6 @@
-# Step 1c: Metadata Extraction with PDFBox
+# Step 1c: Metadata Extraction with PDFBox - DONE
+
+> **Status**: Fully implemented. Uses PDFBox 3.0 with `Loader.loadPDF()`. Includes SHA-256 content hashing (weak fallback removed), XMP extraction with 10MB size cap via `.use{}`, encrypted PDF handling via `SecurePDFHandler`, and 60-second `withTimeoutOrNull` for PDF parsing.
 
 ## Overview
 Implement comprehensive PDF metadata extraction using Apache PDFBox, transforming discovered PDF files into rich metadata objects.

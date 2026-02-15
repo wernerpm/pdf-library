@@ -1,4 +1,6 @@
-# Step 1: PDF Scanner and Storage Module (Kotlin)
+# Step 1: PDF Scanner and Storage Module (Kotlin) - DONE
+
+> **Status**: All components in this step are fully implemented with additional security hardening applied (13 fixes covering thread safety, symlink protection, file size limits, persist-first ordering, timeout protection, and more). See AGENTS.md for full details.
 
 ## Overview
 Implement the storage abstraction layer with FileSystem implementation and PDF indexing service using Kotlin/Ktor, following the architecture defined in the main implementation plan.
@@ -193,7 +195,7 @@ Metadata stored as `metadata.json` files alongside PDFs:
 
 ## Next Steps
 After completion of this step:
-- **Step 2**: Add thumbnail generation using PDFBox
-- **Step 3**: Implement REST API endpoints with Ktor
-- **Step 4**: Build sync service with incremental updates
-- **Step 5**: Create frontend UI with vanilla JavaScript
+- **Step 2**: Add thumbnail generation using PDFBox - NOT STARTED
+- **Step 3**: Implement REST API endpoints with Ktor - DONE (implemented as part of Step 1)
+- **Step 4**: Build sync service with incremental updates - DONE (implemented as part of Step 1)
+- **Step 5**: Create frontend UI with vanilla JavaScript - NOT STARTED

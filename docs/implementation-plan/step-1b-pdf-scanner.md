@@ -1,4 +1,6 @@
-# Step 1b: PDF Scanner + Basic File Discovery
+# Step 1b: PDF Scanner + Basic File Discovery - DONE
+
+> **Status**: Fully implemented. Includes recursive directory traversal, duplicate detection, configurable `maxFiles` limit (100k default), symlink loop prevention via `toRealPath()` visited-directory tracking, `ScanProgressListener` with suspend methods, and comprehensive error reporting.
 
 ## Overview
 Implement the PDF scanning service that discovers PDF files across configured directories using the storage abstraction layer from Step 1a.
