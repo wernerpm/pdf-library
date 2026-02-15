@@ -2,6 +2,7 @@ package com.example.storage
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.io.IOException
 import java.nio.file.*
@@ -17,6 +18,7 @@ class FileSystemStorage(
 
     companion object {
         const val DEFAULT_MAX_READ_SIZE = 500_000_000L // 500MB
+        private val logger = LoggerFactory.getLogger(FileSystemStorage::class.java)
     }
 
     private val basePathNormalized = Paths.get(basePath).toAbsolutePath().normalize()
@@ -86,7 +88,7 @@ class FileSystemStorage(
                 try {
                     Files.deleteIfExists(tempFile)
                 } catch (cleanupException: Exception) {
-                    // Ignore cleanup errors
+                    logger.warn("Failed to clean up temp file: ${tempFile.fileName}", cleanupException)
                 }
                 throw e
             }
