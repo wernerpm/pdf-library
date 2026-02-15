@@ -10,5 +10,6 @@ data class ScanConfiguration(
     val fileExtensions: List<String> = listOf(".pdf"),
     val validatePdfHeaders: Boolean = true,
     val followSymlinks: Boolean = false,
-    val maxFileSize: Long = 500_000_000L // 500MB
+    val maxFileSize: Long = 500_000_000L, // 500MB
+    val maxFiles: Int = 100_000 // Maximum number of PDF files to discover per scan
 )

@@ -16,6 +16,8 @@ class PDFScanner(
     private val duplicateDetector = DuplicateDetector()
     private val metadataExtractor = com.example.metadata.MetadataExtractor(storageProvider)
     private val progressListeners = mutableListOf<ScanProgressListener>()
+    private var discoveredFileCount = 0
+    private val maxFiles get() = configuration.scanning.maxFiles
 
     /**
      * Register a progress listener to receive scanning events
@@ -40,6 +42,7 @@ class PDFScanner(
 
     suspend fun scanForPDFs(progressListener: ScanProgressListener? = null): ScanResult {
         val startTime = Clock.System.now()
+        discoveredFileCount = 0
         val allFiles = mutableListOf<PDFFileInfo>()
         val errors = mutableListOf<ScanError>()
         var totalFilesScanned = 0
@@ -156,7 +159,7 @@ class PDFScanner(
                     val metadata = storageProvider.getMetadata(fullPath)
 
                     if (metadata.isDirectory) {
-                        if (configuration.scanning.recursive && currentDepth < configuration.scanning.maxDepth) {
+                        if (configuration.scanning.recursive && currentDepth < configuration.scanning.maxDepth && discoveredFileCount < maxFiles) {
                             val subResult = walkDirectory(fullPath, currentDepth + 1, progressListener)
                             discoveredFiles.addAll(subResult.discoveredFiles)
                             totalFilesScanned += subResult.totalFilesScanned
@@ -168,6 +171,9 @@ class PDFScanner(
                         totalFilesScanned++
 
                         if (isPdfFile(item) && metadata.size <= configuration.scanning.maxFileSize) {
+                            if (discoveredFileCount >= maxFiles) {
+                                break
+                            }
                             if (!configuration.scanning.validatePdfHeaders || validator.isValidPDF(fullPath)) {
                                 val pdfFileInfo = PDFFileInfo(
                                     path = fullPath,
@@ -178,6 +184,7 @@ class PDFScanner(
                                     }
                                 )
                                 discoveredFiles.add(pdfFileInfo)
+                                discoveredFileCount++
                                 progressListener?.onFileDiscovered(pdfFileInfo)
                             } else {
                                 invalidFilesSkipped++
