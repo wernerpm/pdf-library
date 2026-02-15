@@ -43,6 +43,36 @@ class ContentHashGeneratorTest {
     }
 
     @Test
+    fun `generateMetadataHash should return valid base64 string`() {
+        val metadata = PDFMetadata(
+            id = "test-id",
+            path = "/test/path.pdf",
+            fileName = "test.pdf",
+            fileSize = 1000L,
+            pageCount = 5,
+            createdDate = null,
+            modifiedDate = null,
+            title = "Test Title",
+            author = "Test Author",
+            subject = null,
+            creator = null,
+            producer = null,
+            keywords = emptyList(),
+            pdfVersion = "1.4",
+            customProperties = emptyMap(),
+            contentHash = "test-hash",
+            isEncrypted = false,
+            isSignedPdf = false,
+            indexedAt = Clock.System.now()
+        )
+
+        val hash = generator.generateMetadataHash(metadata)
+
+        assertTrue(hash.isNotBlank())
+        assertTrue(hash.matches(Regex("^[A-Za-z0-9+/=]*$")))
+    }
+
+    @Test
     fun `generateMetadataHash should produce consistent hashes for same metadata`() {
         val metadata = PDFMetadata(
             id = "test-id",
