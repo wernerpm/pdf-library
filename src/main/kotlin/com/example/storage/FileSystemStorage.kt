@@ -10,7 +10,14 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.time.Instant
 import kotlin.io.path.*
 
-class FileSystemStorage(private val basePath: String) : StorageProvider {
+class FileSystemStorage(
+    private val basePath: String,
+    private val maxReadSize: Long = DEFAULT_MAX_READ_SIZE
+) : StorageProvider {
+
+    companion object {
+        const val DEFAULT_MAX_READ_SIZE = 500_000_000L // 500MB
+    }
 
     private val basePathNormalized = Paths.get(basePath).toAbsolutePath().normalize()
 
@@ -43,6 +50,11 @@ class FileSystemStorage(private val basePath: String) : StorageProvider {
 
             if (resolvedPath.isDirectory()) {
                 throw StorageException("Cannot read directory as file: $path")
+            }
+
+            val fileSize = Files.size(resolvedPath)
+            if (fileSize > maxReadSize) {
+                throw StorageException("File too large to read: $path ($fileSize bytes, max $maxReadSize)")
             }
 
             resolvedPath.readBytes()
