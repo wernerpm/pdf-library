@@ -5,6 +5,7 @@ import com.example.storage.StorageProvider
 import kotlinx.coroutines.*
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
+import java.nio.file.Paths
 import kotlin.time.measureTime
 
 class PDFScanner(
@@ -18,6 +19,7 @@ class PDFScanner(
     private val progressListeners = mutableListOf<ScanProgressListener>()
     private var discoveredFileCount = 0
     private val maxFiles get() = configuration.scanning.maxFiles
+    private val visitedDirectories = mutableSetOf<String>()
 
     /**
      * Register a progress listener to receive scanning events
@@ -43,6 +45,7 @@ class PDFScanner(
     suspend fun scanForPDFs(progressListener: ScanProgressListener? = null): ScanResult {
         val startTime = Clock.System.now()
         discoveredFileCount = 0
+        visitedDirectories.clear()
         val allFiles = mutableListOf<PDFFileInfo>()
         val errors = mutableListOf<ScanError>()
         var totalFilesScanned = 0
@@ -141,6 +144,27 @@ class PDFScanner(
                     scanDuration = kotlin.time.Duration.ZERO,
                     extractionDuration = null,
                     errors = listOf(error)
+                )
+            }
+
+            // Resolve to real path to detect symlink loops
+            val realPath = try {
+                Paths.get(path).toRealPath().toString()
+            } catch (e: Exception) {
+                path // Fall back to original path if resolution fails
+            }
+            if (!visitedDirectories.add(realPath)) {
+                return ScanResult(
+                    discoveredFiles = emptyList(),
+                    extractedMetadata = emptyList(),
+                    totalFilesScanned = 0,
+                    totalDirectoriesScanned = 0,
+                    duplicatesRemoved = 0,
+                    invalidFilesSkipped = 0,
+                    metadataExtractionErrors = 0,
+                    scanDuration = kotlin.time.Duration.ZERO,
+                    extractionDuration = null,
+                    errors = emptyList()
                 )
             }
 

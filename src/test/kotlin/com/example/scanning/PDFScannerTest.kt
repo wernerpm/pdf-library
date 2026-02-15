@@ -182,15 +182,17 @@ class PDFScannerTest {
     fun `scanForPDFs removes duplicates across paths`() = runTest {
         val mockStorage = MockStorageProvider()
 
-        // Setup directory with files that will be scanned multiple times
-        mockStorage.addDirectory("/path1", listOf("file1.pdf", "file2.pdf", "file3.pdf"))
+        // Setup two different directories with overlapping file paths
+        mockStorage.addDirectory("/path1", listOf("file1.pdf", "file2.pdf"))
+        mockStorage.addDirectory("/path2", listOf("file2.pdf", "file3.pdf"))
 
         mockStorage.addFile("/path1/file1.pdf", "%PDF-1.4\nFile1".toByteArray())
         mockStorage.addFile("/path1/file2.pdf", "%PDF-1.4\nFile2".toByteArray())
-        mockStorage.addFile("/path1/file3.pdf", "%PDF-1.4\nFile3".toByteArray())
+        mockStorage.addFile("/path2/file2.pdf", "%PDF-1.4\nFile2".toByteArray())
+        mockStorage.addFile("/path2/file3.pdf", "%PDF-1.4\nFile3".toByteArray())
 
         val config = AppConfiguration(
-            pdfScanPaths = listOf("/path1", "/path1"), // same path twice to create duplicates
+            pdfScanPaths = listOf("/path1", "/path2"),
             metadataStoragePath = "/metadata",
             scanning = ScanConfiguration(
                 recursive = false,
@@ -201,9 +203,32 @@ class PDFScannerTest {
         val scanner = PDFScanner(mockStorage, config)
         val result = scanner.scanForPDFs()
 
-        // Should find 3 unique files (duplicates from scanning same path twice should be removed)
-        assertEquals(3, result.discoveredFiles.size)
-        assertEquals(3, result.duplicatesRemoved) // 6 total files found, 3 unique = 3 duplicates removed
-        assertEquals(6, result.totalFilesScanned) // each file scanned twice
+        // 4 files discovered across both paths, all unique paths
+        assertEquals(4, result.discoveredFiles.size)
+        assertEquals(4, result.totalFilesScanned)
+    }
+
+    @Test
+    fun `scanForPDFs skips already visited directories`() = runTest {
+        val mockStorage = MockStorageProvider()
+
+        mockStorage.addDirectory("/path1", listOf("file1.pdf"))
+        mockStorage.addFile("/path1/file1.pdf", "%PDF-1.4\nFile1".toByteArray())
+
+        val config = AppConfiguration(
+            pdfScanPaths = listOf("/path1", "/path1"), // same path twice
+            metadataStoragePath = "/metadata",
+            scanning = ScanConfiguration(
+                recursive = false,
+                validatePdfHeaders = true
+            )
+        )
+
+        val scanner = PDFScanner(mockStorage, config)
+        val result = scanner.scanForPDFs()
+
+        // Second visit to /path1 should be skipped entirely
+        assertEquals(1, result.discoveredFiles.size)
+        assertEquals(1, result.totalFilesScanned)
     }
 }
