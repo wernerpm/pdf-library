@@ -100,24 +100,24 @@ Main (Ktor app)
 
 **Storage Layer** (`src/main/kotlin/com/example/storage/`)
 - `StorageProvider` - Interface with methods: `exists`, `read`, `write`, `list`, `delete`, `getMetadata`, `createDirectory`
-- `FileSystemStorage` - Primary implementation with atomic writes (temp file + rename), path traversal prevention, normalized path handling
+- `FileSystemStorage` - Primary implementation with atomic writes (temp file + rename), path traversal prevention, normalized path handling, configurable `maxReadSize` (default 500MB), symlink-safe recursive delete
 - `FileMetadata` - Data class: `path`, `size`, `createdAt`, `modifiedAt`, `isDirectory`
 
 **Scanning** (`src/main/kotlin/com/example/scanning/`)
-- `PDFScanner` - Recursive file discovery with configurable depth, extension filtering, size limits
+- `PDFScanner` - Recursive file discovery with configurable depth, extension filtering, size limits, symlink loop detection via visited directory tracking, configurable `maxFiles` cap (default 100k)
 - `PDFValidator` - Validates PDF headers (checks for `%PDF` magic bytes)
 - `DuplicateDetector` - Path-based deduplication across multiple scan paths
 - `PDFFileInfo` - Data class: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`
 - `ScanResult` - Data class with discovered files, metadata, error counts, timing
-- `ScanProgress` / `ScanProgressListener` - Callback interface: `onDirectoryStarted`, `onFileDiscovered`, `onError`, `onScanCompleted`
+- `ScanProgress` / `ScanProgressListener` - Suspend callback interface: `onDirectoryStarted`, `onFileDiscovered`, `onError`, `onScanCompleted`
 - `ConsoleScanProgressListener` - Prints progress to console
 - `RepositoryProgressListener` - Extracts and persists metadata during scan (buffers files per directory, extracts on directory completion)
 
 **Metadata Extraction** (`src/main/kotlin/com/example/metadata/`)
-- `MetadataExtractor` - Main extractor: reads PDF bytes via StorageProvider, loads with PDFBox, orchestrates sub-extractors, returns null on error
+- `MetadataExtractor` - Main extractor: reads PDF bytes via StorageProvider, loads with PDFBox, orchestrates sub-extractors, returns null on error, 60s timeout per PDF
 - `DocumentInfoExtractor` - Extracts standard PDF document info (title, author, subject, creator, producer, dates)
-- `CustomPropertiesExtractor` - Extracts custom and XMP metadata properties
-- `ContentHashGenerator` - Generates SHA-256 content hashes for deduplication
+- `CustomPropertiesExtractor` - Extracts custom and XMP metadata properties (XMP capped at 10MB)
+- `ContentHashGenerator` - Generates SHA-256 hashes for both content and metadata deduplication (no weak fallbacks)
 - `SecurePDFHandler` - Gracefully handles encrypted/signed PDFs
 - `BatchMetadataExtractor` - Concurrent batch extraction with configurable parallelism and progress callbacks
 - `PDFMetadata` - Core data model (see Data Models section)
@@ -125,7 +125,7 @@ Main (Ktor app)
 **Repository System** (`src/main/kotlin/com/example/repository/`)
 - `MetadataRepository` - Interface with methods: `getAllPDFs`, `getPDF`, `savePDF`, `deletePDF`, `search`, `searchByProperty`, `searchByAuthor`, `searchByTitle`, `count`, `loadFromStorage`, `persistToStorage`, `clear`
 - `JsonRepository` - Persistent layer: stores each PDF as `$metadataPath/$id.json`, delegates search to in-memory
-- `InMemoryMetadataRepository` - Cache layer wrapping any MetadataRepository: ConcurrentHashMap + 3 secondary indices (path, author, title), Mutex-protected writes, rollback on persistence failure
+- `InMemoryMetadataRepository` - Cache layer wrapping any MetadataRepository: ConcurrentHashMap + 3 secondary indices (path, author, title), all reads and writes Mutex-protected, persist-first ordering (backing store updated before cache)
 - `JsonPersistenceManager` - Serializes/deserializes PDFMetadata to individual JSON files
 - `RepositoryManager` - Orchestrates initialization, shutdown, backup, maintenance, consistency checks
 - `ConsistencyManager` - Detects and repairs orphaned data (in-memory vs on-disk), validates data integrity
@@ -134,7 +134,7 @@ Main (Ktor app)
 **Configuration** (`src/main/kotlin/com/example/config/`)
 - `ConfigurationManager` - Loads from `config.json`, creates defaults if missing, validates, supports path expansion (`~/path`)
 - `AppConfiguration` - Data class: `pdfScanPaths`, `metadataStoragePath`, `scanning`
-- `ScanConfiguration` - Data class: `recursive` (true), `maxDepth` (50), `excludePatterns`, `fileExtensions` ([".pdf"]), `validatePdfHeaders` (true), `followSymlinks` (false), `maxFileSize` (500MB)
+- `ScanConfiguration` - Data class: `recursive` (true), `maxDepth` (50), `excludePatterns`, `fileExtensions` ([".pdf"]), `validatePdfHeaders` (true), `followSymlinks` (false), `maxFileSize` (500MB), `maxFiles` (100k)
 
 **Sync Service** (`src/main/kotlin/com/example/sync/`)
 - `SyncService` - Orchestrates full and incremental sync operations
@@ -150,13 +150,15 @@ Main (Ktor app)
 - **Async Processing**: Coroutines for all I/O operations
 - **Immutable Data**: Kotlin data classes for all models
 - **Atomic Writes**: Temp file + rename to prevent corruption
-- **Listener Pattern**: ScanProgressListener for extensible scan event handling
+- **Listener Pattern**: ScanProgressListener (suspend interface) for extensible scan event handling
+- **Resource Limits**: File size caps on reads, XMP size caps, PDF parse timeouts, max file count per scan
+- **Symlink Safety**: Loop detection in scanner, guarded recursive delete in storage
 
 ### Error Handling Patterns
 
-- **Storage Layer**: All exceptions wrapped in `StorageException`. Atomic writes prevent corruption. Path validation prevents directory traversal.
-- **Repository Layer**: Rollback on persistence failure (removes from cache/indices if save fails). ConsistencyManager catches and logs during repair.
-- **Scanning/Extraction**: MetadataExtractor returns `null` on errors (never throws). RepositoryProgressListener counts extraction errors. `ScanError` captures path, message, timestamp.
+- **Storage Layer**: All exceptions wrapped in `StorageException`. Atomic writes prevent corruption. Path validation prevents directory traversal. File size validated before reading. Recursive delete guards against symlinks escaping base directory. Temp file cleanup failures logged.
+- **Repository Layer**: Persist-first ordering (backing store updated before cache on save/delete). All reads and writes mutex-protected for consistency. ConsistencyManager catches and logs during repair.
+- **Scanning/Extraction**: MetadataExtractor returns `null` on errors or timeout (60s per PDF). XMP metadata reads capped at 10MB. Streams use `.use{}` for guaranteed cleanup. RepositoryProgressListener counts extraction errors. `ScanError` captures path, message, timestamp. Symlink loops detected via visited directory tracking.
 - **Sync Service**: `SyncResult.failed()` creates error result. `finally` block ensures cleanup.
 - **Configuration**: Validation returns list of errors (doesn't throw). Path expansion handles missing properties.
 - **API Layer**: `try-catch` with HTTP status code mapping: 503 if not initialized, 404 for missing resources, 500 for unexpected errors.
@@ -211,7 +213,7 @@ All endpoints return HTTP 503 if the system is not initialized.
 - **Behavior**: Returns error if sync already in progress. Full sync scans all configured paths. Incremental sync uses content hashes for duplicate detection.
 
 ### `GET /api/pdfs` - List PDFs (Paginated)
-- **Query Params**: `page` (default 0), `size` (default 50), `q` (optional search query)
+- **Query Params**: `page` (default 0, min 0), `size` (default 50, range 1-500), `q` (optional search query)
 - **Response**: `ApiResponse<PaginatedResponse<PDFMetadata>>` with `data`, `page`, `size`, `total`, `totalPages`
 - **Behavior**: If `q` is provided, performs full-text search. Otherwise returns all PDFs paginated.
 
@@ -359,7 +361,8 @@ The application uses `config.json` in the project root (created with defaults if
         "fileExtensions": [".pdf"],
         "validatePdfHeaders": true,
         "followSymlinks": false,
-        "maxFileSize": 500000000
+        "maxFileSize": 500000000,
+        "maxFiles": 100000
     }
 }
 ```
