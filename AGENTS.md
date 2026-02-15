@@ -4,9 +4,9 @@ This file provides guidance for AI agents working with this PDF management appli
 
 ## Project Overview
 
-This is a high-performance PDF management application built with Kotlin + Ktor. The system manages thousands of PDFs with thumbnail generation, metadata indexing, and flexible storage backends.
+This is a high-performance PDF management application built with Kotlin + Ktor. The system manages thousands of PDFs with metadata indexing, full-text search, content-based deduplication, and flexible storage backends.
 
-**Technology Stack**: Kotlin (JVM 21) • Ktor 2.3.5 • Apache PDFBox 3.0.0 • kotlinx-serialization • Gradle with Kotlin DSL
+**Technology Stack**: Kotlin 2.0.20 (JVM 21) • Ktor 2.3.5 • Apache PDFBox 3.0.0 • kotlinx-serialization 1.6.0 • kotlinx-coroutines 1.7.3 • kotlinx-datetime 0.4.1 • Gradle with Kotlin DSL
 
 ## Dev Environment Tips
 
@@ -22,7 +22,7 @@ This is a high-performance PDF management application built with Kotlin + Ktor. 
 ```bash
 ./gradlew build         # Build the project
 ./gradlew test          # Run all tests
-./gradlew run           # Run the application locally (starts on http://localhost:8080)
+./gradlew run           # Run the application locally (starts on http://0.0.0.0:8080)
 ./gradlew clean build   # Clean build from scratch
 java -jar build/libs/pdf-library-1.0.0.jar    # Run the built JAR directly
 ```
@@ -37,7 +37,56 @@ java -jar build/libs/pdf-library-1.0.0.jar    # Run the built JAR directly
 ## Architecture Overview
 
 ### Initialization Flow
-Config → Storage → Repository → Sync → Server
+
+```
+1. ConfigurationManager loads AppConfiguration from config.json
+2. FileSystemStorage created for metadata (restricted to metadataStoragePath)
+3. FileSystemStorage created for PDFs (unrestricted - root path "/")
+4. JsonRepository created (persistent layer using JsonPersistenceManager)
+5. InMemoryMetadataRepository created (cache layer wrapping JsonRepository)
+6. ConsistencyManager created (monitors cache/disk sync)
+7. RepositoryManager created and initialized:
+   - Loads metadata from storage into cache
+   - Performs consistency check
+   - Repairs inconsistencies if found
+   - Validates data integrity
+8. SyncService created with pdfStorage, config, and repository
+9. ConsoleScanProgressListener registered
+10. Initial full sync performed
+11. Ktor server starts on 0.0.0.0:8080
+```
+
+### Component Dependency Graph
+
+```
+Main (Ktor app)
+├── ConfigurationManager
+├── FileSystemStorage (metadata - restricted path)
+├── FileSystemStorage (pdfs - unrestricted)
+├── JsonRepository
+│   └── JsonPersistenceManager
+│       └── StorageProvider (metadata)
+├── InMemoryMetadataRepository
+│   ├── JsonRepository (backing store)
+│   └── SearchEngine
+├── ConsistencyManager
+├── RepositoryManager
+└── SyncService
+    └── PDFScanner
+        ├── PDFValidator
+        ├── DuplicateDetector
+        ├── MetadataExtractor
+        │   ├── DocumentInfoExtractor
+        │   ├── CustomPropertiesExtractor
+        │   ├── ContentHashGenerator
+        │   └── SecurePDFHandler
+        └── RepositoryProgressListener
+```
+
+### Global Singletons (Main.kt)
+- `lateinit var repository: MetadataRepository` - InMemoryMetadataRepository instance
+- `lateinit var repositoryManager: RepositoryManager`
+- `lateinit var syncService: SyncService`
 
 ### Core Components
 
@@ -45,42 +94,231 @@ Config → Storage → Repository → Sync → Server
 
 **Main Application** (`src/main/kotlin/com/example/Main.kt`)
 - Ktor-based web server with REST API endpoints
+- `configureApplication()` wires all components together
+- `configureRouting()` defines all API routes
 - Global components: `repository`, `repositoryManager`, `syncService`
 
 **Storage Layer** (`src/main/kotlin/com/example/storage/`)
-- `StorageProvider` interface for pluggable backends
-- `FileSystemStorage` primary implementation
-- `FileMetadata` data model for file information
+- `StorageProvider` - Interface with methods: `exists`, `read`, `write`, `list`, `delete`, `getMetadata`, `createDirectory`
+- `FileSystemStorage` - Primary implementation with atomic writes (temp file + rename), path traversal prevention, normalized path handling
+- `FileMetadata` - Data class: `path`, `size`, `createdAt`, `modifiedAt`, `isDirectory`
 
-**Scanning & Metadata** (`src/main/kotlin/com/example/scanning/`, `src/main/kotlin/com/example/metadata/`)
-- `PDFScanner` handles file discovery and validation
-- `MetadataExtractor` extracts PDF metadata using PDFBox
-- `BatchMetadataExtractor` for bulk processing
-- `DuplicateDetector` for content-based deduplication
+**Scanning** (`src/main/kotlin/com/example/scanning/`)
+- `PDFScanner` - Recursive file discovery with configurable depth, extension filtering, size limits
+- `PDFValidator` - Validates PDF headers (checks for `%PDF` magic bytes)
+- `DuplicateDetector` - Path-based deduplication across multiple scan paths
+- `PDFFileInfo` - Data class: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`
+- `ScanResult` - Data class with discovered files, metadata, error counts, timing
+- `ScanProgress` / `ScanProgressListener` - Callback interface: `onDirectoryStarted`, `onFileDiscovered`, `onError`, `onScanCompleted`
+- `ConsoleScanProgressListener` - Prints progress to console
+- `RepositoryProgressListener` - Extracts and persists metadata during scan (buffers files per directory, extracts on directory completion)
+
+**Metadata Extraction** (`src/main/kotlin/com/example/metadata/`)
+- `MetadataExtractor` - Main extractor: reads PDF bytes via StorageProvider, loads with PDFBox, orchestrates sub-extractors, returns null on error
+- `DocumentInfoExtractor` - Extracts standard PDF document info (title, author, subject, creator, producer, dates)
+- `CustomPropertiesExtractor` - Extracts custom and XMP metadata properties
+- `ContentHashGenerator` - Generates SHA-256 content hashes for deduplication
+- `SecurePDFHandler` - Gracefully handles encrypted/signed PDFs
+- `BatchMetadataExtractor` - Concurrent batch extraction with configurable parallelism and progress callbacks
+- `PDFMetadata` - Core data model (see Data Models section)
 
 **Repository System** (`src/main/kotlin/com/example/repository/`)
-- `MetadataRepository` interface with `InMemoryMetadataRepository` implementation
-- `RepositoryManager` handles initialization and lifecycle
-- `JsonPersistenceManager` for filesystem-based persistence
-- `SearchEngine` for full-text search capabilities
-- `ConsistencyManager` ensures data integrity
+- `MetadataRepository` - Interface with methods: `getAllPDFs`, `getPDF`, `savePDF`, `deletePDF`, `search`, `searchByProperty`, `searchByAuthor`, `searchByTitle`, `count`, `loadFromStorage`, `persistToStorage`, `clear`
+- `JsonRepository` - Persistent layer: stores each PDF as `$metadataPath/$id.json`, delegates search to in-memory
+- `InMemoryMetadataRepository` - Cache layer wrapping any MetadataRepository: ConcurrentHashMap + 3 secondary indices (path, author, title), Mutex-protected writes, rollback on persistence failure
+- `JsonPersistenceManager` - Serializes/deserializes PDFMetadata to individual JSON files
+- `RepositoryManager` - Orchestrates initialization, shutdown, backup, maintenance, consistency checks
+- `ConsistencyManager` - Detects and repairs orphaned data (in-memory vs on-disk), validates data integrity
+- `SearchEngine` - Full-text search with relevance scoring: title (+3.0), author/filename (+2.0), subject/keywords (+1.0), custom properties (+0.5). AND logic across all terms.
 
 **Configuration** (`src/main/kotlin/com/example/config/`)
-- `ConfigurationManager` loads from `config.json`
-- `AppConfiguration` main config data class
-- `ScanConfiguration` for scan-specific settings
+- `ConfigurationManager` - Loads from `config.json`, creates defaults if missing, validates, supports path expansion (`~/path`)
+- `AppConfiguration` - Data class: `pdfScanPaths`, `metadataStoragePath`, `scanning`
+- `ScanConfiguration` - Data class: `recursive` (true), `maxDepth` (50), `excludePatterns`, `fileExtensions` ([".pdf"]), `validatePdfHeaders` (true), `followSymlinks` (false), `maxFileSize` (500MB)
 
 **Sync Service** (`src/main/kotlin/com/example/sync/`)
-- `SyncService` orchestrates incremental and full syncing
-- Integrates scanning, metadata extraction, and repository updates
+- `SyncService` - Orchestrates full and incremental sync operations
+- Prevents concurrent syncs via `syncInProgress` flag
+- `SyncResult` - Data class with timing, counts, errors
+- `SyncType` enum: `FULL`, `INCREMENTAL`
 
 ### Key Design Patterns
 
 - **Layered Architecture**: Storage → Repository → Service → API
+- **3-Tier Caching**: In-Memory (ConcurrentHashMap + indices) → JSON Files → Filesystem
 - **Dependency Injection**: Components passed through constructors
-- **Async Processing**: Coroutines for I/O operations
-- **Immutable Data**: Kotlin data classes for metadata
-- **Error Handling**: Result types and exception propagation
+- **Async Processing**: Coroutines for all I/O operations
+- **Immutable Data**: Kotlin data classes for all models
+- **Atomic Writes**: Temp file + rename to prevent corruption
+- **Listener Pattern**: ScanProgressListener for extensible scan event handling
+
+### Error Handling Patterns
+
+- **Storage Layer**: All exceptions wrapped in `StorageException`. Atomic writes prevent corruption. Path validation prevents directory traversal.
+- **Repository Layer**: Rollback on persistence failure (removes from cache/indices if save fails). ConsistencyManager catches and logs during repair.
+- **Scanning/Extraction**: MetadataExtractor returns `null` on errors (never throws). RepositoryProgressListener counts extraction errors. `ScanError` captures path, message, timestamp.
+- **Sync Service**: `SyncResult.failed()` creates error result. `finally` block ensures cleanup.
+- **Configuration**: Validation returns list of errors (doesn't throw). Path expansion handles missing properties.
+- **API Layer**: `try-catch` with HTTP status code mapping: 503 if not initialized, 404 for missing resources, 500 for unexpected errors.
+
+**Custom Exceptions**: `ConfigurationException`, `StorageException`
+
+### Data Models
+
+**PDFMetadata** (`com.example.metadata.PDFMetadata`) - Core model, `@Serializable`
+```
+id, path, fileName, fileSize, pageCount, createdDate, modifiedDate,
+title, author, subject, creator, producer, keywords, pdfVersion,
+customProperties, contentHash, isEncrypted, isSignedPdf, indexedAt
+```
+
+**API Response Models** (defined in `Main.kt`):
+- `ApiResponse<T>` - Generic wrapper: `success`, `data`, `error`
+- `PaginatedResponse<T>` - Paginated wrapper: `data`, `page`, `size`, `total`, `totalPages`
+- `SystemStatus` - Repository status + sync state
+- `SyncRequest` - `type` field for sync endpoint
+
+**Repository Models** (defined in repository classes):
+- `ConsistencyReport` - Orphaned data in-memory vs on-disk
+- `ValidationResult` - Data integrity issues
+- `RepairResult` - Consistency repair outcomes
+- `RepositoryMemoryInfo` - Cache statistics (record count, index sizes)
+- `RepositoryStatus` - Overall health and metrics
+- `RepositoryMetrics` - Performance metrics (avg search time, last persist time)
+- `BackupData` - Serializable backup container
+
+### Serialization
+
+- **Framework**: kotlinx-serialization with JSON format
+- **Config**: `prettyPrint = true`, `ignoreUnknownKeys = true`
+- **Storage Format**: One JSON file per PDF at `$metadataStoragePath/$id.json`
+- **API**: Automatic via Ktor ContentNegotiation plugin
+
+## API Endpoints Reference
+
+All API endpoints return JSON wrapped in `ApiResponse<T>`: `{ "success": bool, "data": T?, "error": string? }`.
+All endpoints return HTTP 503 if the system is not initialized.
+
+### `GET /` - Health Check
+- **Response**: Plain text `"PDF Library - Server is running!"`
+
+### `GET /status` - System Status
+- **Response**: `ApiResponse<SystemStatus>` containing repository initialization state, record counts, memory info (index sizes), metrics, and sync-in-progress flag
+
+### `POST /api/sync` - Trigger Sync
+- **Request Body**: `{ "type": "full" | "incremental" }`
+- **Response**: `ApiResponse<SyncResult>` with filesScanned, filesDiscovered, metadataExtracted, metadataStored, metadataSkipped, duplicatesRemoved, totalErrors, timing durations, error details
+- **Behavior**: Returns error if sync already in progress. Full sync scans all configured paths. Incremental sync uses content hashes for duplicate detection.
+
+### `GET /api/pdfs` - List PDFs (Paginated)
+- **Query Params**: `page` (default 0), `size` (default 50), `q` (optional search query)
+- **Response**: `ApiResponse<PaginatedResponse<PDFMetadata>>` with `data`, `page`, `size`, `total`, `totalPages`
+- **Behavior**: If `q` is provided, performs full-text search. Otherwise returns all PDFs paginated.
+
+### `GET /api/pdfs/{id}` - Get PDF by ID
+- **Path Param**: `id` - unique PDF metadata ID
+- **Response**: `ApiResponse<PDFMetadata>` or HTTP 404
+
+### `GET /api/search` - Advanced Search
+- **Query Params**: `q` (general query), `author`, `title`, `property`, `value`
+- **Response**: `ApiResponse<List<PDFMetadata>>`
+- **Search Priority**:
+  1. If `author` provided: case-insensitive substring match on author
+  2. If `title` provided: case-insensitive substring match on title
+  3. If `property` + `value` provided: custom property key-value match
+  4. Otherwise: full-text search using `q` with relevance ranking
+
+## Sync Flow Detail
+
+### Full Sync (`POST /api/sync` with `{"type": "full"}`)
+```
+1. SyncService.fullSync()
+2. PDFScanner.scanForPDFs(scanPaths)
+   └─ walkDirectory() recursively for each path
+      └─ For each directory:
+         ├─ Validate files (PDF header check if enabled)
+         ├─ Filter by extension, size, exclude patterns
+         └─ Emit onFileDiscovered events
+3. RepositoryProgressListener handles events:
+   ├─ Buffers discovered files per directory
+   └─ On directory completion:
+      ├─ MetadataExtractor.extractMetadata() for each file
+      │   ├─ Read PDF bytes via StorageProvider
+      │   ├─ Load with PDFBox
+      │   ├─ DocumentInfoExtractor → standard metadata
+      │   ├─ CustomPropertiesExtractor → XMP + custom props
+      │   ├─ ContentHashGenerator → SHA-256 hash
+      │   ├─ Check encryption/signature status
+      │   └─ On failure: try SecurePDFHandler, then return null
+      ├─ repository.savePDF() for each extracted metadata
+      └─ Clear buffer
+4. Return SyncResult with counts and timing
+```
+
+### Incremental Sync
+- Same flow but uses repository content hashes to skip already-indexed files
+
+## Project Structure
+
+```
+src/main/kotlin/com/example/
+├── Main.kt                              # Entry point, server, routing
+├── config/
+│   ├── AppConfiguration.kt              # Main config data class
+│   ├── ConfigurationManager.kt          # Config loading/validation/saving
+│   └── ScanConfiguration.kt             # Scan settings data class
+├── metadata/
+│   ├── PDFMetadata.kt                   # Core PDF metadata model
+│   ├── MetadataExtractor.kt             # Main extractor (orchestrates sub-extractors)
+│   ├── DocumentInfoExtractor.kt         # Standard PDF info extraction
+│   ├── CustomPropertiesExtractor.kt     # Custom + XMP metadata
+│   ├── ContentHashGenerator.kt          # SHA-256 content hashing
+│   ├── SecurePDFHandler.kt              # Encrypted PDF handling
+│   ├── BatchMetadataExtractor.kt        # Concurrent batch extraction
+│   └── MetadataExtractionExample.kt     # Usage example
+├── repository/
+│   ├── MetadataRepository.kt            # Repository interface
+│   ├── JsonRepository.kt                # JSON file persistence
+│   ├── InMemoryMetadataRepository.kt    # In-memory cache + indices
+│   ├── JsonPersistenceManager.kt        # JSON serialization
+│   ├── RepositoryManager.kt             # Lifecycle orchestration
+│   ├── ConsistencyManager.kt            # Cache/disk consistency
+│   └── SearchEngine.kt                  # Full-text search + ranking
+├── scanning/
+│   ├── PDFScanner.kt                    # File discovery engine
+│   ├── PDFValidator.kt                  # PDF header validation
+│   ├── DuplicateDetector.kt             # Path-based deduplication
+│   ├── PDFFileInfo.kt                   # Discovered file data class
+│   ├── ScanResult.kt                    # Scan result data class
+│   ├── ScanProgress.kt                  # Progress listener interface + console impl
+│   └── RepositoryProgressListener.kt    # Extract + persist during scan
+├── storage/
+│   ├── StorageProvider.kt               # Storage interface
+│   ├── FileSystemStorage.kt             # Filesystem implementation
+│   └── FileMetadata.kt                  # File metadata data class
+└── sync/
+    └── SyncService.kt                   # Full + incremental sync
+
+src/test/kotlin/com/example/
+├── MainTest.kt                          # Application endpoint tests
+├── SyncIntegrationDemo.kt              # Sync demo
+├── config/
+│   └── ConfigurationManagerTest.kt      # Config load/save/validate tests
+├── metadata/
+│   ├── MetadataExtractorTest.kt         # Extraction with mocked storage
+│   ├── BatchMetadataExtractorTest.kt    # Batch processing tests
+│   └── ContentHashGeneratorTest.kt      # Hash consistency tests
+├── repository/
+│   ├── RepositoryIntegrationTest.kt     # Full repo workflow tests
+│   └── RepositoryDemo.kt               # Repository usage demo
+├── scanning/
+│   ├── PDFScannerTest.kt               # Discovery + filtering tests
+│   ├── PDFValidatorTest.kt             # Header validation tests
+│   ├── DuplicateDetectorTest.kt         # Deduplication tests
+│   └── ScanIntegrationTest.kt          # Real filesystem integration
+└── storage/
+    └── FileSystemStorageTest.kt         # Storage ops + security tests
+```
 
 ## Testing Instructions
 
@@ -94,33 +332,58 @@ Config → Storage → Repository → Sync → Server
 - Use MockK for mocking in unit tests
 - Check test output in `build/reports/tests/test/index.html` for detailed results
 
+### Test Patterns Used
+
+- **MockK-based unit tests**: `coEvery` for coroutine mocking (MetadataExtractorTest, BatchMetadataExtractorTest)
+- **Custom mock implementations**: Hand-written MockStorageProvider classes (PDFScannerTest, PDFValidatorTest)
+- **Integration tests with TempDir**: JUnit `@TempDir` for real filesystem tests (RepositoryIntegrationTest, ScanIntegrationTest, FileSystemStorageTest)
+- **Coroutine testing**: `kotlinx.coroutines.test.runTest` for all async tests
+- **Edge cases covered**: Empty files, invalid PDFs, non-existent paths, path traversal attempts, duplicate detection, concurrent processing
+
 ### Test Categories
-- **Unit Tests**: Individual component behavior
-- **Integration Tests**: System interactions and data flow
-- **Demo Classes**: Development examples and usage patterns
-
-## API Endpoints Reference
-
-- `GET /` - Health check
-- `GET /status` - System status
-- `POST /api/sync` - Trigger sync (body: `{"type": "full|incremental"}`)
-- `GET /api/pdfs` - List PDFs with pagination (`?page=0&size=50&q=search`)
-- `GET /api/pdfs/{id}` - Get specific PDF metadata
-- `GET /api/search` - Search PDFs (`?q=query&author=&title=&property=&value=`)
+- **Unit Tests**: Individual component behavior (extractors, validators, hash generator)
+- **Integration Tests**: System interactions with real filesystem (scanning, repository persistence)
+- **Demo Classes**: Development examples and usage patterns (SyncIntegrationDemo, RepositoryDemo)
 
 ## Configuration
 
-The application uses `config.json` in the project root:
+The application uses `config.json` in the project root (created with defaults if missing):
 ```json
 {
     "pdfScanPaths": ["/path/to/pdfs"],
     "metadataStoragePath": "/path/to/metadata",
     "scanning": {
+        "recursive": true,
         "maxDepth": 25,
-        "excludePatterns": ["*.tmp"]
+        "excludePatterns": ["*.tmp"],
+        "fileExtensions": [".pdf"],
+        "validatePdfHeaders": true,
+        "followSymlinks": false,
+        "maxFileSize": 500000000
     }
 }
 ```
+
+A `config.json.base` template is also available in the project root.
+
+**Defaults** (when config.json is missing):
+- PDF scan paths: `$HOME/Documents/PDFs`, `$HOME/Downloads`
+- Metadata storage: `$HOME/.pdf-library/metadata`
+- Validation: at least one scan path required, extensions must start with dot, max depth > 0
+
+## Dependencies (build.gradle.kts)
+
+| Category | Library | Version |
+|----------|---------|---------|
+| Web | ktor-server-core, netty, html-builder, content-negotiation, partial-content | 2.3.5 |
+| Serialization | ktor-serialization-kotlinx-json, kotlinx-serialization-json | 2.3.5 / 1.6.0 |
+| PDF | pdfbox, pdfbox-tools | 3.0.0 |
+| Async | kotlinx-coroutines-core | 1.7.3 |
+| DateTime | kotlinx-datetime | 0.4.1 |
+| HTML | kotlinx-html-jvm | 0.9.1 |
+| Hashing | commons-codec | 1.16.0 |
+| Logging | logback-classic | 1.4.11 |
+| Test | junit-jupiter, kotlin-test-junit5, ktor-server-tests, mockk, coroutines-test | 5.10.0 / 1.13.8 |
 
 ## PR Instructions
 
@@ -139,3 +402,26 @@ The application uses `config.json` in the project root:
 - If the server won't start, verify `config.json` exists and paths are valid
 - For PDF processing errors, ensure PDFBox can access and read the PDF files
 - Check that JVM 21 or higher is installed and active
+
+## Adding New Features - Quick Reference
+
+### Adding a new API endpoint
+1. Define route in `Main.kt` inside `configureRouting()`
+2. Follow the `ApiResponse<T>` wrapper pattern for consistent responses
+3. Check system readiness with the existing pattern (503 if not initialized)
+4. Add `@Serializable` to any new request/response data classes
+
+### Adding a new metadata field
+1. Add field to `PDFMetadata` data class in `metadata/PDFMetadata.kt`
+2. Extract the value in `MetadataExtractor` (or create a new sub-extractor)
+3. Update `SearchEngine` if the field should be searchable
+4. Update `InMemoryMetadataRepository` if the field needs an index
+
+### Adding a new storage backend
+1. Implement the `StorageProvider` interface in `storage/`
+2. Wire it in `Main.kt`'s `configureApplication()` function
+
+### Adding a new repository implementation
+1. Implement the `MetadataRepository` interface in `repository/`
+2. Wire it in `Main.kt`'s `configureApplication()` function
+3. Can be wrapped with `InMemoryMetadataRepository` for caching
