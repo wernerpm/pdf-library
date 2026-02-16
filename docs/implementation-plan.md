@@ -10,6 +10,7 @@
 | Metadata extraction | DONE | PDFBox 3.0, XMP, encrypted PDF handling, SHA-256 hashing |
 | Repository + persistence | DONE | In-memory cache with JSON file backing, thread-safe, persist-first ordering |
 | Sync service | DONE | Incremental sync, progress tracking, contention prevention |
+| Two-phase sync | NOT STARTED | Split sync into fast discovery + parallel extraction (see step-2-two-phase-sync.md) |
 | REST API | DONE | Full CRUD, search, sync, pagination endpoints via Ktor |
 | Security hardening | DONE | 13 issues fixed (see AGENTS.md for details) |
 | Thumbnail generation | DONE | `ThumbnailGenerator` renders page 0 at 72 DPI → 300px PNG, `thumbnailPath` in `PDFMetadata`, `GET /api/thumbnails/{id}` endpoint |
@@ -164,8 +165,9 @@ A PDF library application that provides a web-based interface for managing thous
 2. **Day 4-5**: Integration testing and performance optimization - NOT STARTED
 
 ### Remaining Work
-1. **Frontend UI** - Vanilla JS + Web Components with virtual scrolling, search, and PDF viewer
-2. **Integration/performance tests** - Large dataset handling, API response times
+1. **Two-phase sync** - Split monolithic sync into fast discovery (filesystem listing) + parallel extraction (PDF parsing, thumbnails, hashing). Resumable, background extraction. See `docs/implementation-plan/step-2-two-phase-sync.md`
+2. **Frontend UI** - Vanilla JS + Web Components with virtual scrolling, search, and PDF viewer
+3. **Integration/performance tests** - Large dataset handling, API response times
 
 ## Project Structure
 
