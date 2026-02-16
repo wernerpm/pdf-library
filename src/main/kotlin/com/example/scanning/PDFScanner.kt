@@ -3,8 +3,8 @@ package com.example.scanning
 import com.example.config.AppConfiguration
 import com.example.storage.StorageProvider
 import kotlinx.coroutines.*
-import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
+import kotlin.time.Clock
+import kotlin.time.Instant
 import java.nio.file.Paths
 import kotlin.time.measureTime
 
@@ -204,7 +204,7 @@ class PDFScanner(
                                     fileName = item,
                                     fileSize = metadata.size,
                                     lastModified = metadata.modifiedAt?.let {
-                                        kotlinx.datetime.Instant.fromEpochSeconds(it.epochSecond, it.nano)
+                                        Instant.fromEpochSeconds(it.epochSecond, it.nano)
                                     }
                                 )
                                 discoveredFiles.add(pdfFileInfo)

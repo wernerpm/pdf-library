@@ -5,7 +5,8 @@ import com.example.storage.StorageProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
+import kotlin.time.Instant
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.slf4j.LoggerFactory
@@ -117,10 +118,10 @@ class MetadataExtractor(
             fileSize = fileInfo.fileSize,
             pageCount = document.numberOfPages,
             createdDate = docInfo.creationDate?.let {
-                kotlinx.datetime.Instant.fromEpochMilliseconds(it.timeInMillis)
+                Instant.fromEpochMilliseconds(it.timeInMillis)
             },
             modifiedDate = docInfo.modificationDate?.let {
-                kotlinx.datetime.Instant.fromEpochMilliseconds(it.timeInMillis)
+                Instant.fromEpochMilliseconds(it.timeInMillis)
             },
             title = docInfo.title,
             author = docInfo.author,

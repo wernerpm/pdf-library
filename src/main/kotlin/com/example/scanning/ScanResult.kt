@@ -1,7 +1,7 @@
 package com.example.scanning
 
 import com.example.metadata.PDFMetadata
-import kotlinx.datetime.Instant
+import kotlin.time.Instant
 import kotlin.time.Duration
 
 data class ScanResult(

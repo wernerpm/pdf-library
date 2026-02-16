@@ -1,6 +1,7 @@
 package com.example.metadata
 
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
+import kotlin.time.Instant
 import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.slf4j.LoggerFactory
@@ -58,10 +59,10 @@ class SecurePDFHandler {
                 fileSize = fileSize,
                 pageCount = pageCount,
                 createdDate = docInfo?.creationDate?.let {
-                    kotlinx.datetime.Instant.fromEpochMilliseconds(it.timeInMillis)
+                    Instant.fromEpochMilliseconds(it.timeInMillis)
                 },
                 modifiedDate = docInfo?.modificationDate?.let {
-                    kotlinx.datetime.Instant.fromEpochMilliseconds(it.timeInMillis)
+                    Instant.fromEpochMilliseconds(it.timeInMillis)
                 },
                 title = title,
                 author = author,

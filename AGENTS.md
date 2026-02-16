@@ -6,7 +6,7 @@ This file provides guidance for AI agents working with this PDF management appli
 
 This is a high-performance PDF management application built with Kotlin + Ktor. The system manages thousands of PDFs with metadata indexing, full-text search, content-based deduplication, and flexible storage backends.
 
-**Technology Stack**: Kotlin 2.0.20 (JVM 21) • Ktor 2.3.5 • Apache PDFBox 3.0.0 • kotlinx-serialization 1.6.0 • kotlinx-coroutines 1.7.3 • kotlinx-datetime 0.4.1 • Gradle with Kotlin DSL
+**Technology Stack**: Kotlin 2.3.10 (JVM 21) • Ktor 3.4.0 • Apache PDFBox 3.0.6 • kotlinx-serialization 1.8.0 • kotlinx-coroutines 1.10.2 • kotlinx-datetime 0.7.1 • Gradle with Kotlin DSL
 
 ## Dev Environment Tips
 
@@ -387,15 +387,15 @@ A `config.json.base` template is also available in the project root.
 
 | Category | Library | Version |
 |----------|---------|---------|
-| Web | ktor-server-core, netty, html-builder, content-negotiation, partial-content | 2.3.5 |
-| Serialization | ktor-serialization-kotlinx-json, kotlinx-serialization-json | 2.3.5 / 1.6.0 |
-| PDF | pdfbox, pdfbox-tools | 3.0.0 |
-| Async | kotlinx-coroutines-core | 1.7.3 |
-| DateTime | kotlinx-datetime | 0.4.1 |
-| HTML | kotlinx-html-jvm | 0.9.1 |
-| Hashing | commons-codec | 1.16.0 |
-| Logging | logback-classic | 1.4.11 |
-| Test | junit-jupiter, kotlin-test-junit5, ktor-server-tests, mockk, coroutines-test | 5.10.0 / 1.13.8 |
+| Web | ktor-server-core, netty, html-builder, content-negotiation, partial-content | 3.4.0 |
+| Serialization | ktor-serialization-kotlinx-json, kotlinx-serialization-json | 3.4.0 / 1.8.0 |
+| PDF | pdfbox, pdfbox-tools | 3.0.6 |
+| Async | kotlinx-coroutines-core | 1.10.2 |
+| DateTime | kotlinx-datetime | 0.7.1 |
+| HTML | kotlinx-html-jvm | 0.12.0 |
+| Hashing | commons-codec | 1.19.0 |
+| Logging | logback-classic | 1.5.31 |
+| Test | junit-jupiter, kotlin-test-junit5, ktor-server-tests, mockk, coroutines-test | 5.14.2 / 1.14.9 |
 
 ## PR Instructions
 

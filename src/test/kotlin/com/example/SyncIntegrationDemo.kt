@@ -7,7 +7,7 @@ import com.example.repository.*
 import com.example.storage.FileSystemStorage
 import com.example.sync.SyncService
 import kotlinx.coroutines.runBlocking
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.nio.file.Path

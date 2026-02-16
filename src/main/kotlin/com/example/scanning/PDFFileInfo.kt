@@ -1,7 +1,7 @@
 package com.example.scanning
 
-import kotlinx.datetime.Clock
-import kotlinx.datetime.Instant
+import kotlin.time.Clock
+import kotlin.time.Instant
 
 data class PDFFileInfo(
     val path: String,

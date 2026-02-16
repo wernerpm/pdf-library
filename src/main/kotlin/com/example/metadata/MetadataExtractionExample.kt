@@ -3,7 +3,7 @@ package com.example.metadata
 import com.example.scanning.PDFFileInfo
 import com.example.storage.FileSystemStorage
 import kotlinx.coroutines.runBlocking
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 import org.slf4j.LoggerFactory
 
 /**

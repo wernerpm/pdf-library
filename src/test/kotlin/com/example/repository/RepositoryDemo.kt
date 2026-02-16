@@ -5,7 +5,7 @@ import com.example.config.ScanConfiguration
 import com.example.metadata.PDFMetadata
 import com.example.storage.FileSystemStorage
 import kotlinx.coroutines.runBlocking
-import kotlinx.datetime.Clock
+import kotlin.time.Clock
 
 import org.junit.jupiter.api.Test
 
