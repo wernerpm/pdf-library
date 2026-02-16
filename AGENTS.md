@@ -79,11 +79,13 @@ Main (Ktor app)
         │   ├── DocumentInfoExtractor
         │   ├── CustomPropertiesExtractor
         │   ├── ContentHashGenerator
+        │   ├── ThumbnailGenerator
         │   └── SecurePDFHandler
         └── RepositoryProgressListener
 ```
 
 ### Global Singletons (Main.kt)
+- `lateinit var appConfig: AppConfiguration` - Loaded application configuration
 - `lateinit var repository: MetadataRepository` - InMemoryMetadataRepository instance
 - `lateinit var repositoryManager: RepositoryManager`
 - `lateinit var syncService: SyncService`
@@ -118,6 +120,7 @@ Main (Ktor app)
 - `DocumentInfoExtractor` - Extracts standard PDF document info (title, author, subject, creator, producer, dates)
 - `CustomPropertiesExtractor` - Extracts custom and XMP metadata properties (XMP capped at 10MB)
 - `ContentHashGenerator` - Generates SHA-256 hashes for both content and metadata deduplication (no weak fallbacks)
+- `ThumbnailGenerator` - Renders PDF page 0 at 72 DPI, scales to 300px width (configurable), returns PNG bytes. Null-safe on failure or zero-page documents.
 - `SecurePDFHandler` - Gracefully handles encrypted/signed PDFs
 - `BatchMetadataExtractor` - Concurrent batch extraction with configurable parallelism and progress callbacks
 - `PDFMetadata` - Core data model (see Data Models section)
@@ -171,7 +174,7 @@ Main (Ktor app)
 ```
 id, path, fileName, fileSize, pageCount, createdDate, modifiedDate,
 title, author, subject, creator, producer, keywords, pdfVersion,
-customProperties, contentHash, isEncrypted, isSignedPdf, indexedAt
+customProperties, contentHash, isEncrypted, isSignedPdf, thumbnailPath, indexedAt
 ```
 
 **API Response Models** (defined in `Main.kt`):
@@ -220,6 +223,10 @@ All endpoints return HTTP 503 if the system is not initialized.
 ### `GET /api/pdfs/{id}` - Get PDF by ID
 - **Path Param**: `id` - unique PDF metadata ID
 - **Response**: `ApiResponse<PDFMetadata>` or HTTP 404
+
+### `GET /api/thumbnails/{id}` - Get PDF Thumbnail
+- **Path Param**: `id` - unique PDF metadata ID
+- **Response**: PNG image bytes with `Content-Type: image/png`, or HTTP 404 if PDF not found or no thumbnail available
 
 ### `GET /api/search` - Advanced Search
 - **Query Params**: `q` (general query), `author`, `title`, `property`, `value`
@@ -275,6 +282,7 @@ src/main/kotlin/com/example/
 │   ├── DocumentInfoExtractor.kt         # Standard PDF info extraction
 │   ├── CustomPropertiesExtractor.kt     # Custom + XMP metadata
 │   ├── ContentHashGenerator.kt          # SHA-256 content hashing
+│   ├── ThumbnailGenerator.kt           # PDF page 0 → PNG thumbnail
 │   ├── SecurePDFHandler.kt              # Encrypted PDF handling
 │   ├── BatchMetadataExtractor.kt        # Concurrent batch extraction
 │   └── MetadataExtractionExample.kt     # Usage example
@@ -309,7 +317,8 @@ src/test/kotlin/com/example/
 ├── metadata/
 │   ├── MetadataExtractorTest.kt         # Extraction with mocked storage
 │   ├── BatchMetadataExtractorTest.kt    # Batch processing tests
-│   └── ContentHashGeneratorTest.kt      # Hash consistency tests
+│   ├── ContentHashGeneratorTest.kt      # Hash consistency tests
+│   └── ThumbnailGeneratorTest.kt        # Thumbnail generation tests
 ├── repository/
 │   ├── RepositoryIntegrationTest.kt     # Full repo workflow tests
 │   └── RepositoryDemo.kt               # Repository usage demo

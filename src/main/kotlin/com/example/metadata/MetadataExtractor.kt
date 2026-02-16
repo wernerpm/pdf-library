@@ -10,10 +10,13 @@ import org.apache.pdfbox.Loader
 import org.apache.pdfbox.pdmodel.PDDocument
 import org.slf4j.LoggerFactory
 import java.io.ByteArrayInputStream
+import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.*
 
 class MetadataExtractor(
-    private val storageProvider: StorageProvider
+    private val storageProvider: StorageProvider,
+    private val thumbnailStoragePath: String? = null
 ) {
 
     private val logger = LoggerFactory.getLogger(MetadataExtractor::class.java)
@@ -21,6 +24,7 @@ class MetadataExtractor(
     private val customPropertiesExtractor = CustomPropertiesExtractor()
     private val contentHashGenerator = ContentHashGenerator()
     private val securePDFHandler = SecurePDFHandler()
+    private val thumbnailGenerator = ThumbnailGenerator()
 
     suspend fun extractMetadata(fileInfo: PDFFileInfo): PDFMetadata? {
         return try {
@@ -103,6 +107,9 @@ class MetadataExtractor(
             false
         }
 
+        // Generate and save thumbnail
+        val thumbnailRelativePath = generateAndSaveThumbnail(document, id)
+
         return PDFMetadata(
             id = id,
             path = fileInfo.path,
@@ -126,8 +133,28 @@ class MetadataExtractor(
             contentHash = contentHash,
             isEncrypted = document.isEncrypted,
             isSignedPdf = isSignedPdf,
+            thumbnailPath = thumbnailRelativePath,
             indexedAt = Clock.System.now()
         )
+    }
+
+    private fun generateAndSaveThumbnail(document: PDDocument, id: String): String? {
+        if (thumbnailStoragePath == null) return null
+
+        return try {
+            val pngBytes = thumbnailGenerator.generateThumbnail(document) ?: return null
+
+            val thumbnailDir = Paths.get(thumbnailStoragePath, "thumbnails")
+            Files.createDirectories(thumbnailDir)
+
+            val thumbnailFile = thumbnailDir.resolve("$id.png")
+            Files.write(thumbnailFile, pngBytes)
+
+            "thumbnails/$id.png"
+        } catch (e: Exception) {
+            logger.warn("Failed to save thumbnail for PDF id=$id", e)
+            null
+        }
     }
 
     private fun parseKeywords(keywordString: String?): List<String> {

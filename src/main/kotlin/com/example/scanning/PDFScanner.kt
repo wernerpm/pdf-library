@@ -15,7 +15,7 @@ class PDFScanner(
 ) {
     private val validator = PDFValidator(storageProvider)
     private val duplicateDetector = DuplicateDetector()
-    private val metadataExtractor = com.example.metadata.MetadataExtractor(storageProvider)
+    private val metadataExtractor = com.example.metadata.MetadataExtractor(storageProvider, configuration.metadataStoragePath)
     private val progressListeners = mutableListOf<ScanProgressListener>()
     private var discoveredFileCount = 0
     private val maxFiles get() = configuration.scanning.maxFiles

@@ -17,10 +17,13 @@ import io.ktor.server.routing.*
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
+import java.nio.file.Files
+import java.nio.file.Paths
 
 private val logger = LoggerFactory.getLogger("Main")
 
 // Global application components
+lateinit var appConfig: AppConfiguration
 lateinit var repository: MetadataRepository
 lateinit var repositoryManager: RepositoryManager
 lateinit var syncService: SyncService
@@ -49,6 +52,7 @@ fun Application.configureApplication() {
             // Load configuration
             val configManager = ConfigurationManager()
             val config = configManager.loadConfiguration()
+            appConfig = config
             logger.info("Configuration loaded: ${config.pdfScanPaths.size} scan paths configured")
 
             // Initialize storage
@@ -207,6 +211,40 @@ fun Application.configureRouting() {
             } catch (e: Exception) {
                 logger.error("Failed to get PDF", e)
                 call.respond(HttpStatusCode.InternalServerError, ApiResponse.error(e.message ?: "Failed to get PDF"))
+            }
+        }
+
+        get("/api/thumbnails/{id}") {
+            try {
+                if (!::repository.isInitialized || !::appConfig.isInitialized) {
+                    call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
+                    return@get
+                }
+                val id = call.parameters["id"] ?: throw IllegalArgumentException("Missing PDF ID")
+                val pdf = repository.getPDF(id)
+
+                if (pdf == null) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("PDF not found"))
+                    return@get
+                }
+
+                val thumbnailRelPath = pdf.thumbnailPath
+                if (thumbnailRelPath == null) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("No thumbnail available"))
+                    return@get
+                }
+
+                val thumbnailFile = Paths.get(appConfig.metadataStoragePath, thumbnailRelPath)
+                if (!Files.exists(thumbnailFile)) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("Thumbnail file not found"))
+                    return@get
+                }
+
+                val bytes = Files.readAllBytes(thumbnailFile)
+                call.respondBytes(bytes, ContentType.Image.PNG)
+            } catch (e: Exception) {
+                logger.error("Failed to get thumbnail", e)
+                call.respond(HttpStatusCode.InternalServerError, ApiResponse.error(e.message ?: "Failed to get thumbnail"))
             }
         }
 

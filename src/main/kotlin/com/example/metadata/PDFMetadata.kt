@@ -30,5 +30,6 @@ data class PDFMetadata(
     val contentHash: String?,
     val isEncrypted: Boolean = false,
     val isSignedPdf: Boolean = false,
+    val thumbnailPath: String? = null,
     val indexedAt: Instant = Clock.System.now()
 )
