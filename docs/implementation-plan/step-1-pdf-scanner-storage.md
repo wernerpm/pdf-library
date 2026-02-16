@@ -11,7 +11,7 @@ Implement the storage abstraction layer with FileSystem implementation and PDF i
 - Extract comprehensive PDF metadata using PDFBox
 - Store metadata in JSON format alongside PDFs
 - Build in-memory metadata repository
-- No thumbnail generation (covered in Step 2)
+- Thumbnail generation added (ThumbnailGenerator renders page 0 → PNG)
 - No API endpoints (covered in Step 3)
 
 ## Implementation Details
@@ -195,7 +195,7 @@ Metadata stored as `metadata.json` files alongside PDFs:
 
 ## Next Steps
 After completion of this step:
-- **Step 2**: Add thumbnail generation using PDFBox - NOT STARTED
+- **Step 2**: Add thumbnail generation using PDFBox - DONE
 - **Step 3**: Implement REST API endpoints with Ktor - DONE (implemented as part of Step 1)
 - **Step 4**: Build sync service with incremental updates - DONE (implemented as part of Step 1)
 - **Step 5**: Create frontend UI with vanilla JavaScript - NOT STARTED

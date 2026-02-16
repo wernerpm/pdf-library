@@ -12,7 +12,7 @@
 | Sync service | DONE | Incremental sync, progress tracking, contention prevention |
 | REST API | DONE | Full CRUD, search, sync, pagination endpoints via Ktor |
 | Security hardening | DONE | 13 issues fixed (see AGENTS.md for details) |
-| Thumbnail generation | NOT STARTED | No `ThumbnailGenerator`, no `thumbnailPath` in `PDFMetadata`, no `/api/thumbnails/{id}` |
+| Thumbnail generation | DONE | `ThumbnailGenerator` renders page 0 at 72 DPI → 300px PNG, `thumbnailPath` in `PDFMetadata`, `GET /api/thumbnails/{id}` endpoint |
 | Frontend UI | NOT STARTED | No HTML/CSS/JS assets |
 | ACL / Permissions | NOT STARTED | No role-based access control |
 | S3 / Cloud storage | NOT STARTED | No `S3Storage` implementation |
@@ -61,7 +61,7 @@ A PDF library application that provides a web-based interface for managing thous
 
 ### 2. PDF Indexing & Synchronization (Week 1-2) - PARTIALLY DONE
 
-> **Status**: PDF scanning, metadata extraction, sync service, and repository persistence are all DONE. Thumbnail generation is NOT STARTED.
+> **Status**: PDF scanning, metadata extraction, sync service, repository persistence, and thumbnail generation are all DONE.
 
 **Purpose**: Automated discovery, indexing, and thumbnail generation for PDFs
 
@@ -82,7 +82,7 @@ A PDF library application that provides a web-based interface for managing thous
 
 ### 3. Backend API (Week 2) - MOSTLY DONE
 
-> **Status**: All listed endpoints are implemented except `GET /api/thumbnails/{id}` (depends on thumbnail generation). Pagination, search, filtering, and error handling are all working. Additional endpoints exist: `DELETE /api/pdfs/{id}`, `GET /api/search/author`, `GET /api/search/title`, `GET /api/search/property`, `GET /api/stats`.
+> **Status**: All listed endpoints are implemented including `GET /api/thumbnails/{id}`. Pagination, search, filtering, and error handling are all working. Additional endpoints exist: `DELETE /api/pdfs/{id}`, `GET /api/search/author`, `GET /api/search/title`, `GET /api/search/property`, `GET /api/stats`.
 
 **Purpose**: REST API for frontend communication
 
@@ -151,7 +151,7 @@ A PDF library application that provides a web-based interface for managing thous
 
 ### Week 1: Core Infrastructure - DONE
 1. **Day 1-2**: Storage abstraction layer + FileSystem implementation - DONE
-2. **Day 3-4**: PDF indexing service with thumbnail generation - DONE (except thumbnails)
+2. **Day 3-4**: PDF indexing service with thumbnail generation - DONE
 3. **Day 5**: Basic sync service - DONE
 
 ### Week 2: API and Integration - DONE
@@ -164,9 +164,8 @@ A PDF library application that provides a web-based interface for managing thous
 2. **Day 4-5**: Integration testing and performance optimization - NOT STARTED
 
 ### Remaining Work
-1. **Thumbnail generation** - Add `ThumbnailGenerator`, `thumbnailPath` to `PDFMetadata`, `GET /api/thumbnails/{id}` endpoint
-2. **Frontend UI** - Vanilla JS + Web Components with virtual scrolling, search, and PDF viewer
-3. **Integration/performance tests** - Large dataset handling, API response times
+1. **Frontend UI** - Vanilla JS + Web Components with virtual scrolling, search, and PDF viewer
+2. **Integration/performance tests** - Large dataset handling, API response times
 
 ## Project Structure
 
