@@ -52,8 +52,10 @@ java -jar build/libs/pdf-library-1.0.0.jar    # Run the built JAR directly
    - Validates data integrity
 8. SyncService created with pdfStorage, config, and repository
 9. ConsoleScanProgressListener registered
-10. Initial full sync performed
-11. Ktor server starts on 0.0.0.0:8080
+10. Phase 1 — Discovery: fast filesystem walk, saves discovery-manifest.json (blocks briefly)
+11. Server marked as ready (API starts accepting requests)
+12. Phase 2 — Extraction: background coroutine extracts metadata for discovered files
+    - Previously extracted files served from persisted PDFMetadata while extraction runs
 ```
 
 ### Component Dependency Graph
@@ -72,16 +74,15 @@ Main (Ktor app)
 ├── ConsistencyManager
 ├── RepositoryManager
 └── SyncService
-    └── PDFScanner
-        ├── PDFValidator
-        ├── DuplicateDetector
-        ├── MetadataExtractor
-        │   ├── DocumentInfoExtractor
-        │   ├── CustomPropertiesExtractor
-        │   ├── ContentHashGenerator
-        │   ├── ThumbnailGenerator
-        │   └── SecurePDFHandler
-        └── RepositoryProgressListener
+    ├── PDFScanner
+    │   ├── PDFValidator
+    │   ├── DuplicateDetector
+    │   └── RepositoryProgressListener (legacy scanAndPersist flow)
+    ├── MetadataExtractor
+    ├── BatchMetadataExtractor (phase 2 extraction, concurrency=4)
+    ├── DiscoveryManifestManager (load/save/update manifest)
+    │   └── FileSystemStorage (metadata path)
+    └── MetadataRepository (persist extracted metadata)
 ```
 
 ### Global Singletons (Main.kt)
@@ -106,14 +107,18 @@ Main (Ktor app)
 - `FileMetadata` - Data class: `path`, `size`, `createdAt`, `modifiedAt`, `isDirectory`
 
 **Scanning** (`src/main/kotlin/com/example/scanning/`)
-- `PDFScanner` - Recursive file discovery with configurable depth, extension filtering, size limits, symlink loop detection via visited directory tracking, configurable `maxFiles` cap (default 100k)
+- `PDFScanner` - Recursive file discovery with configurable depth, extension filtering, size limits, symlink loop detection via visited directory tracking, configurable `maxFiles` cap (default 100k). Key methods: `scanForPDFs()` (raw scan), `discoverFiles()` (returns `DiscoveryManifest`), `scanAndPersist()` (legacy monolithic flow)
 - `PDFValidator` - Validates PDF headers (checks for `%PDF` magic bytes)
 - `DuplicateDetector` - Path-based deduplication across multiple scan paths
-- `PDFFileInfo` - Data class: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`
+- `FileStatus` - `@Serializable` enum: `DISCOVERED`, `EXTRACTED`, `FAILED`
+- `PDFFileInfo` - `@Serializable` data class: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`, `status` (FileStatus, default DISCOVERED)
+- `DiscoveryManifest` - `@Serializable` data class: `lastDiscovery`, `scanPaths`, `files` (List<PDFFileInfo>)
+- `DiscoveryManifestManager` - Manages `discovery-manifest.json` at `$metadataStoragePath/discovery-manifest.json`. Methods: `load()`, `save()` (atomic via StorageProvider), `updateFileStatus()` (load-patch-save)
 - `ScanResult` - Data class with discovered files, metadata, error counts, timing
 - `ScanProgress` / `ScanProgressListener` - Suspend callback interface: `onDirectoryStarted`, `onFileDiscovered`, `onError`, `onScanCompleted`
-- `ConsoleScanProgressListener` - Prints progress to console
-- `RepositoryProgressListener` - Extracts and persists metadata during scan (buffers files per directory, extracts on directory completion)
+- `ExtractionProgressListener` - Non-suspend callback interface: `onExtractionStarted`, `onFileExtracted`, `onExtractionCompleted`
+- `ConsoleScanProgressListener` - Implements both `ScanProgressListener` and `ExtractionProgressListener`, prints progress to console
+- `RepositoryProgressListener` - Extracts and persists metadata during scan (legacy flow, used by `scanAndPersist()`)
 
 **Metadata Extraction** (`src/main/kotlin/com/example/metadata/`)
 - `MetadataExtractor` - Main extractor: reads PDF bytes via StorageProvider, loads with PDFBox, orchestrates sub-extractors, returns null on error, 60s timeout per PDF
@@ -140,10 +145,19 @@ Main (Ktor app)
 - `ScanConfiguration` - Data class: `recursive` (true), `maxDepth` (50), `excludePatterns`, `fileExtensions` ([".pdf"]), `validatePdfHeaders` (true), `followSymlinks` (false), `maxFileSize` (500MB), `maxFiles` (100k)
 
 **Sync Service** (`src/main/kotlin/com/example/sync/`)
-- `SyncService` - Orchestrates full and incremental sync operations
+- `SyncService` - Orchestrates two-phase sync (discovery + extraction). Key methods:
+  - `performDiscovery()` — Phase 1: calls `scanner.discoverFiles()`, saves manifest, returns `DiscoveryManifest`
+  - `performExtraction(manifest)` — Phase 2: filters `DISCOVERED` entries, uses `BatchMetadataExtractor`, persists to repository, updates manifest status per file
+  - `resumeExtraction()` — Loads existing manifest, processes remaining `DISCOVERED` entries (resumable after crash)
+  - `performFullSync()` — Discovery + extraction in sequence (guarded by `syncInProgress` flag)
+  - `performIncrementalSync()` — Discovery + diff against existing manifest + extract only pending entries
+  - `diffManifests()` — Compares new vs existing manifest: new files → DISCOVERED, changed (size/mtime) → DISCOVERED, deleted → removed + PDFMetadata deleted, unchanged EXTRACTED → skipped
+  - `performSyncWithProgress()` — Flow-based sync with progress events
 - Prevents concurrent syncs via `syncInProgress` flag
-- `SyncResult` - Data class with timing, counts, errors
+- `SyncResult` - `@Serializable` data class with timing, counts, errors
 - `SyncType` enum: `FULL`, `INCREMENTAL`
+- `SyncError` - `@Serializable` data class: `path`, `message`, `timestamp`
+- `SyncProgress` - Sealed class hierarchy for streaming sync status updates
 
 ### Key Design Patterns
 
@@ -153,7 +167,8 @@ Main (Ktor app)
 - **Async Processing**: Coroutines for all I/O operations
 - **Immutable Data**: Kotlin data classes for all models
 - **Atomic Writes**: Temp file + rename to prevent corruption
-- **Listener Pattern**: ScanProgressListener (suspend interface) for extensible scan event handling
+- **Two-Phase Sync**: Discovery (fast filesystem walk, no PDF reads) → persisted manifest → Extraction (slow, resumable, parallel). Server accepts requests between phases.
+- **Listener Pattern**: ScanProgressListener (suspend interface) + ExtractionProgressListener for extensible event handling
 - **Resource Limits**: File size caps on reads, XMP size caps, PDF parse timeouts, max file count per scan
 - **Symlink Safety**: Loop detection in scanner, guarded recursive delete in storage
 
@@ -162,7 +177,7 @@ Main (Ktor app)
 - **Storage Layer**: All exceptions wrapped in `StorageException`. Atomic writes prevent corruption. Path validation prevents directory traversal. File size validated before reading. Recursive delete guards against symlinks escaping base directory. Temp file cleanup failures logged.
 - **Repository Layer**: Persist-first ordering (backing store updated before cache on save/delete). All reads and writes mutex-protected for consistency. ConsistencyManager catches and logs during repair.
 - **Scanning/Extraction**: MetadataExtractor returns `null` on errors or timeout (60s per PDF). XMP metadata reads capped at 10MB. Streams use `.use{}` for guaranteed cleanup. RepositoryProgressListener counts extraction errors. `ScanError` captures path, message, timestamp. Symlink loops detected via visited directory tracking.
-- **Sync Service**: `SyncResult.failed()` creates error result. `finally` block ensures cleanup.
+- **Sync Service**: `SyncResult.failed()` creates error result. `finally` block ensures `syncInProgress` cleanup. Manifest updated per-file during extraction (EXTRACTED/FAILED) for crash resumability. `diffManifests()` logs warnings for failed deletions.
 - **Configuration**: Validation returns list of errors (doesn't throw). Path expansion handles missing properties.
 - **API Layer**: `try-catch` with HTTP status code mapping: 503 if not initialized, 404 for missing resources, 500 for unexpected errors.
 
@@ -183,6 +198,13 @@ customProperties, contentHash, isEncrypted, isSignedPdf, thumbnailPath, indexedA
 - `SystemStatus` - Repository status + sync state
 - `SyncRequest` - `type` field for sync endpoint
 
+**Scanning/Sync Models**:
+- `FileStatus` - Enum: `DISCOVERED`, `EXTRACTED`, `FAILED`
+- `PDFFileInfo` - Lightweight file record: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`, `status`
+- `DiscoveryManifest` - Persisted manifest: `lastDiscovery`, `scanPaths`, `files` (List<PDFFileInfo>). Stored at `$metadataStoragePath/discovery-manifest.json` (~200 bytes/entry)
+- `SyncResult` - Sync outcome: timing, counts (scanned, discovered, extracted, stored, skipped, errors)
+- `SyncProgress` - Sealed class: Started, ScanningStarted, ScanningCompleted, ExtractionStarted, Completed, Failed, Error
+
 **Repository Models** (defined in repository classes):
 - `ConsistencyReport` - Orphaned data in-memory vs on-disk
 - `ValidationResult` - Data integrity issues
@@ -196,7 +218,7 @@ customProperties, contentHash, isEncrypted, isSignedPdf, thumbnailPath, indexedA
 
 - **Framework**: kotlinx-serialization with JSON format
 - **Config**: `prettyPrint = true`, `ignoreUnknownKeys = true`
-- **Storage Format**: One JSON file per PDF at `$metadataStoragePath/$id.json`
+- **Storage Format**: One JSON file per PDF at `$metadataStoragePath/$id.json`. Discovery manifest at `$metadataStoragePath/discovery-manifest.json`
 - **API**: Automatic via Ktor ContentNegotiation plugin
 
 ## API Endpoints Reference
@@ -213,7 +235,7 @@ All endpoints return HTTP 503 if the system is not initialized.
 ### `POST /api/sync` - Trigger Sync
 - **Request Body**: `{ "type": "full" | "incremental" }`
 - **Response**: `ApiResponse<SyncResult>` with filesScanned, filesDiscovered, metadataExtracted, metadataStored, metadataSkipped, duplicatesRemoved, totalErrors, timing durations, error details
-- **Behavior**: Returns error if sync already in progress. Full sync scans all configured paths. Incremental sync uses content hashes for duplicate detection.
+- **Behavior**: Returns error if sync already in progress. Full sync runs discovery + extraction for all configured paths. Incremental sync diffs new discovery against existing manifest — only new/changed files are extracted, deleted files are cleaned up, unchanged EXTRACTED files are skipped.
 
 ### `GET /api/pdfs` - List PDFs (Paginated)
 - **Query Params**: `page` (default 0, min 0), `size` (default 50, range 1-500), `q` (optional search query)
@@ -239,33 +261,75 @@ All endpoints return HTTP 503 if the system is not initialized.
 
 ## Sync Flow Detail
 
-### Full Sync (`POST /api/sync` with `{"type": "full"}`)
+### Two-Phase Sync Architecture
+
+Sync is split into two phases to allow the server to start accepting requests quickly:
+
+### Phase 1: Discovery (fast, blocks briefly)
 ```
-1. SyncService.fullSync()
-2. PDFScanner.scanForPDFs(scanPaths)
-   └─ walkDirectory() recursively for each path
+1. PDFScanner.discoverFiles()
+   └─ scanForPDFs() → walkDirectory() recursively for each configured path
       └─ For each directory:
          ├─ Validate files (PDF header check if enabled)
          ├─ Filter by extension, size, exclude patterns
          └─ Emit onFileDiscovered events
-3. RepositoryProgressListener handles events:
-   ├─ Buffers discovered files per directory
-   └─ On directory completion:
-      ├─ MetadataExtractor.extractMetadata() for each file
-      │   ├─ Read PDF bytes via StorageProvider
-      │   ├─ Load with PDFBox
-      │   ├─ DocumentInfoExtractor → standard metadata
-      │   ├─ CustomPropertiesExtractor → XMP + custom props
-      │   ├─ ContentHashGenerator → SHA-256 hash
-      │   ├─ Check encryption/signature status
-      │   └─ On failure: try SecurePDFHandler, then return null
-      ├─ repository.savePDF() for each extracted metadata
-      └─ Clear buffer
-4. Return SyncResult with counts and timing
+2. Wrap results into DiscoveryManifest (all entries status=DISCOVERED)
+3. DiscoveryManifestManager.save() → atomic write to discovery-manifest.json
+4. Return manifest (server can start accepting requests now)
 ```
 
-### Incremental Sync
-- Same flow but uses repository content hashes to skip already-indexed files
+### Phase 2: Extraction (slow, resumable, runs in background)
+```
+1. Filter manifest for entries with status=DISCOVERED
+2. BatchMetadataExtractor.extractBatch(pending) with concurrency=4
+   └─ For each file:
+       ├─ MetadataExtractor.extractMetadata()
+       │   ├─ Read PDF bytes via StorageProvider
+       │   ├─ Load with PDFBox
+       │   ├─ DocumentInfoExtractor → standard metadata
+       │   ├─ CustomPropertiesExtractor → XMP + custom props
+       │   ├─ ContentHashGenerator → SHA-256 hash
+       │   ├─ ThumbnailGenerator → PNG thumbnail
+       │   └─ On failure: try SecurePDFHandler, then return null
+       └─ Return PDFMetadata or null
+3. For each successfully extracted metadata:
+   ├─ repository.savePDF(metadata)
+   └─ manifestManager.updateFileStatus(path, EXTRACTED)
+4. For files that failed extraction:
+   └─ manifestManager.updateFileStatus(path, FAILED)
+5. Return SyncResult with counts and timing
+```
+
+### Full Sync (`POST /api/sync` with `{"type": "full"}`)
+- Runs Phase 1 → Phase 2 sequentially within `syncInProgress` guard
+
+### Incremental Sync (`POST /api/sync` with `{"type": "incremental"}`)
+```
+1. Load existing manifest (if any)
+2. Run Phase 1 (new discovery)
+3. Diff new discovery against existing manifest:
+   ├─ New files (path not in existing): status=DISCOVERED
+   ├─ Changed files (size or mtime differ): reset to DISCOVERED
+   ├─ Deleted files (in existing, not in new): remove + delete PDFMetadata
+   └─ Unchanged EXTRACTED files: keep status (skipped)
+4. Save merged manifest
+5. Run Phase 2 on merged manifest (only DISCOVERED entries processed)
+```
+
+### Startup Flow (Main.kt)
+```
+1. Phase 1: syncService.performDiscovery() — blocks briefly
+2. Server marked ready, API starts accepting requests
+3. Phase 2: launch { syncService.performExtraction(manifest) } — background
+   Previously indexed files available via repository while extraction runs
+```
+
+### Resume After Crash
+```
+1. syncService.resumeExtraction()
+2. Loads existing discovery-manifest.json
+3. Processes only entries with status=DISCOVERED (skips EXTRACTED/FAILED)
+```
 
 ## Project Structure
 
@@ -295,19 +359,21 @@ src/main/kotlin/com/example/
 │   ├── ConsistencyManager.kt            # Cache/disk consistency
 │   └── SearchEngine.kt                  # Full-text search + ranking
 ├── scanning/
-│   ├── PDFScanner.kt                    # File discovery engine
+│   ├── PDFScanner.kt                    # File discovery engine (discoverFiles + scanForPDFs)
 │   ├── PDFValidator.kt                  # PDF header validation
 │   ├── DuplicateDetector.kt             # Path-based deduplication
-│   ├── PDFFileInfo.kt                   # Discovered file data class
+│   ├── FileStatus.kt                    # DISCOVERED/EXTRACTED/FAILED enum
+│   ├── PDFFileInfo.kt                   # Discovered file data class (with status)
+│   ├── DiscoveryManifest.kt             # Manifest data class + DiscoveryManifestManager
 │   ├── ScanResult.kt                    # Scan result data class
-│   ├── ScanProgress.kt                  # Progress listener interface + console impl
-│   └── RepositoryProgressListener.kt    # Extract + persist during scan
+│   ├── ScanProgress.kt                  # Progress listeners (scan + extraction) + console impl
+│   └── RepositoryProgressListener.kt    # Extract + persist during scan (legacy flow)
 ├── storage/
 │   ├── StorageProvider.kt               # Storage interface
 │   ├── FileSystemStorage.kt             # Filesystem implementation
 │   └── FileMetadata.kt                  # File metadata data class
 └── sync/
-    └── SyncService.kt                   # Full + incremental sync
+    └── SyncService.kt                   # Two-phase sync (discovery + extraction)
 
 src/test/kotlin/com/example/
 ├── MainTest.kt                          # Application endpoint tests
@@ -326,6 +392,8 @@ src/test/kotlin/com/example/
 │   ├── PDFScannerTest.kt               # Discovery + filtering tests
 │   ├── PDFValidatorTest.kt             # Header validation tests
 │   ├── DuplicateDetectorTest.kt         # Deduplication tests
+│   ├── DiscoveryManifestTest.kt         # Manifest save/load/update round-trip tests
+│   ├── DiscoverFilesTest.kt            # discoverFiles() + no-byte-read verification
 │   └── ScanIntegrationTest.kt          # Real filesystem integration
 └── storage/
     └── FileSystemStorageTest.kt         # Storage ops + security tests
