@@ -42,6 +42,19 @@ class PDFScanner(
         progressListeners.clear()
     }
 
+    /**
+     * Phase 1: Fast discovery only — filesystem walk producing a DiscoveryManifest.
+     * No PDF bytes are read. All entries have status = DISCOVERED.
+     */
+    suspend fun discoverFiles(progressListener: ScanProgressListener? = null): DiscoveryManifest {
+        val scanResult = scanForPDFs(progressListener)
+        return DiscoveryManifest(
+            lastDiscovery = Clock.System.now(),
+            scanPaths = configuration.pdfScanPaths,
+            files = scanResult.discoveredFiles.map { it.copy(status = FileStatus.DISCOVERED) }
+        )
+    }
+
     suspend fun scanForPDFs(progressListener: ScanProgressListener? = null): ScanResult {
         val startTime = Clock.System.now()
         discoveredFileCount = 0

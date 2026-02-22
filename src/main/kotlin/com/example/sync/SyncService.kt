@@ -4,9 +4,7 @@ import com.example.config.AppConfiguration
 import com.example.metadata.BatchMetadataExtractor
 import com.example.metadata.MetadataExtractor
 import com.example.repository.MetadataRepository
-import com.example.scanning.PDFScanner
-import com.example.scanning.ScanProgressListener
-import com.example.scanning.ScanResult
+import com.example.scanning.*
 import com.example.storage.StorageProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -15,6 +13,7 @@ import kotlin.time.Instant
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
 import kotlin.time.Duration
+import kotlin.time.measureTime
 
 class SyncService(
     private val storageProvider: StorageProvider,
@@ -23,6 +22,13 @@ class SyncService(
 ) {
     private val logger = LoggerFactory.getLogger(SyncService::class.java)
     private val scanner = PDFScanner(storageProvider, configuration, repository)
+    private val metadataExtractor = MetadataExtractor(storageProvider, configuration.metadataStoragePath)
+    private val batchExtractor = BatchMetadataExtractor(metadataExtractor)
+    private val metadataStorage = com.example.storage.FileSystemStorage(configuration.metadataStoragePath)
+    private val manifestManager = DiscoveryManifestManager(
+        storageProvider = metadataStorage,
+        manifestPath = "discovery-manifest.json"
+    )
 
     @Volatile
     private var syncInProgress = false
@@ -75,8 +81,137 @@ class SyncService(
         }
     }
 
+    /**
+     * Phase 1: Fast discovery — filesystem walk, no PDF bytes read.
+     * Returns the manifest with all discovered files.
+     */
+    suspend fun performDiscovery(): DiscoveryManifest {
+        logger.info("Starting discovery phase...")
+        val manifest = scanner.discoverFiles()
+        manifestManager.save(manifest)
+        logger.info("Discovery complete: ${manifest.files.size} PDFs found in ${manifest.scanPaths.size} scan paths")
+        return manifest
+    }
+
+    /**
+     * Phase 2: Extraction — iterate manifest, extract metadata for DISCOVERED entries,
+     * persist to repository, update manifest status per file.
+     */
+    suspend fun performExtraction(manifest: DiscoveryManifest): SyncResult {
+        val startTime = Clock.System.now()
+        val pending = manifest.files.filter { it.status == FileStatus.DISCOVERED }
+
+        if (pending.isEmpty()) {
+            logger.info("No pending files to extract")
+            return SyncResult(
+                syncType = SyncType.FULL,
+                filesScanned = manifest.files.size,
+                filesDiscovered = manifest.files.size,
+                metadataExtracted = 0,
+                metadataStored = 0,
+                metadataSkipped = manifest.files.count { it.status == FileStatus.EXTRACTED },
+                duplicatesRemoved = 0,
+                totalErrors = 0,
+                scanDuration = Duration.ZERO,
+                extractionDuration = Duration.ZERO,
+                syncDuration = Duration.ZERO,
+                errors = emptyList(),
+                startTime = startTime,
+                endTime = Clock.System.now()
+            )
+        }
+
+        logger.info("Starting extraction phase: ${pending.size} files to process")
+        var extracted = 0
+        var failed = 0
+        val errors = mutableListOf<SyncError>()
+        val extractionDuration = measureTime {
+            val extractedMetadata = batchExtractor.extractBatch(pending)
+
+            // Persist successfully extracted metadata
+            for (metadata in extractedMetadata) {
+                try {
+                    repository.savePDF(metadata)
+                    manifestManager.updateFileStatus(metadata.path, FileStatus.EXTRACTED)
+                    extracted++
+                    logger.debug("Extracted and persisted: ${metadata.fileName}")
+                } catch (e: Exception) {
+                    manifestManager.updateFileStatus(metadata.path, FileStatus.FAILED)
+                    failed++
+                    errors.add(SyncError(metadata.path, e.message ?: "Persistence failed", Clock.System.now()))
+                    logger.error("Failed to persist metadata for ${metadata.fileName}", e)
+                }
+            }
+
+            // Mark files that failed extraction (not in extractedMetadata)
+            val extractedPaths = extractedMetadata.map { it.path }.toSet()
+            for (file in pending) {
+                if (file.path !in extractedPaths) {
+                    try {
+                        manifestManager.updateFileStatus(file.path, FileStatus.FAILED)
+                    } catch (e: Exception) {
+                        logger.warn("Failed to update manifest status for ${file.path}", e)
+                    }
+                    failed++
+                    errors.add(SyncError(file.path, "Metadata extraction failed", Clock.System.now()))
+                }
+            }
+        }
+
+        val endTime = Clock.System.now()
+        logger.info("Extraction complete: $extracted extracted, $failed failed out of ${pending.size} pending")
+
+        return SyncResult(
+            syncType = SyncType.FULL,
+            filesScanned = manifest.files.size,
+            filesDiscovered = manifest.files.size,
+            metadataExtracted = extracted,
+            metadataStored = extracted,
+            metadataSkipped = manifest.files.count { it.status == FileStatus.EXTRACTED },
+            duplicatesRemoved = 0,
+            totalErrors = errors.size,
+            scanDuration = Duration.ZERO,
+            extractionDuration = extractionDuration,
+            syncDuration = endTime - startTime,
+            errors = errors,
+            startTime = startTime,
+            endTime = endTime
+        )
+    }
+
+    /**
+     * Resume extraction from an existing manifest — only DISCOVERED entries get processed.
+     */
+    suspend fun resumeExtraction(): SyncResult {
+        val manifest = manifestManager.load()
+        if (manifest == null) {
+            logger.warn("No manifest found, cannot resume extraction")
+            val now = Clock.System.now()
+            return SyncResult(
+                syncType = SyncType.FULL,
+                filesScanned = 0,
+                filesDiscovered = 0,
+                metadataExtracted = 0,
+                metadataStored = 0,
+                metadataSkipped = 0,
+                duplicatesRemoved = 0,
+                totalErrors = 1,
+                scanDuration = Duration.ZERO,
+                extractionDuration = Duration.ZERO,
+                syncDuration = Duration.ZERO,
+                errors = listOf(SyncError("MANIFEST", "No manifest found to resume from", now)),
+                startTime = now,
+                endTime = now
+            )
+        }
+        logger.info("Resuming extraction from manifest with ${manifest.files.size} total entries")
+        return performExtraction(manifest)
+    }
+
+    /**
+     * Full sync: discovery + extraction in sequence.
+     */
     suspend fun performFullSync(): SyncResult {
-        // Check if sync is already in progress
         if (!syncStart()) {
             logger.warn("Full sync requested but sync is already in progress")
             return SyncResult.alreadyInProgress(SyncType.FULL)
@@ -86,49 +221,33 @@ class SyncService(
         val startTime = Clock.System.now()
 
         return try {
-            // Scanner now handles scanning, extraction, and persistence all in one
-            logger.info("Scanning for PDFs and extracting metadata...")
-            val scanResult = scanner.scanAndPersist()
+            // Phase 1: Discovery
+            val manifest = performDiscovery()
 
-            logger.info("Full sync completed: ${scanResult.discoveredFiles.size} files found, " +
-                    "${scanResult.extractedMetadata.size} metadata extracted and persisted")
-
+            // Phase 2: Extraction
+            val result = performExtraction(manifest)
             val duration = Clock.System.now() - startTime
 
-            val result = SyncResult(
+            result.copy(
                 syncType = SyncType.FULL,
-                filesScanned = scanResult.totalFilesScanned,
-                filesDiscovered = scanResult.discoveredFiles.size,
-                metadataExtracted = scanResult.extractedMetadata.size,
-                metadataStored = scanResult.extractedMetadata.size, // All extracted metadata is persisted
-                metadataSkipped = 0, // No skipping in full sync with new approach
-                duplicatesRemoved = scanResult.duplicatesRemoved,
-                totalErrors = scanResult.errors.size + scanResult.metadataExtractionErrors,
-                scanDuration = scanResult.scanDuration,
-                extractionDuration = scanResult.extractionDuration ?: Duration.ZERO,
                 syncDuration = duration,
-                errors = scanResult.errors.map { SyncError(it.path, it.error, it.timestamp) },
                 startTime = startTime,
                 endTime = Clock.System.now()
-            )
-
-            logger.info("Full sync completed: ${result.summarize()}")
-            result
-
+            ).also {
+                logger.info("Full sync completed: ${it.summarize()}")
+            }
         } catch (e: Exception) {
             logger.error("Full sync failed", e)
-            SyncResult.failed(
-                syncType = SyncType.FULL,
-                startTime = startTime,
-                error = e
-            )
+            SyncResult.failed(syncType = SyncType.FULL, startTime = startTime, error = e)
         } finally {
             syncFinish()
         }
     }
 
+    /**
+     * Incremental sync: discovery + diff against existing manifest + extract only pending.
+     */
     suspend fun performIncrementalSync(): SyncResult {
-        // Check if sync is already in progress
         if (!syncStart()) {
             logger.warn("Incremental sync requested but sync is already in progress")
             return SyncResult.alreadyInProgress(SyncType.INCREMENTAL)
@@ -138,46 +257,99 @@ class SyncService(
         val startTime = Clock.System.now()
 
         return try {
-            // For incremental sync, we use the same scanAndPersist approach
-            // The repository layer can handle duplicate detection via content hashes
-            logger.info("Scanning for PDFs and extracting metadata...")
-            val scanResult = scanner.scanAndPersist()
+            val existingManifest = manifestManager.load()
 
-            logger.info("Incremental sync completed: ${scanResult.discoveredFiles.size} files found, " +
-                    "${scanResult.extractedMetadata.size} metadata extracted and persisted")
+            // Phase 1: Discovery
+            val newManifest = scanner.discoverFiles()
 
+            // Diff against existing manifest
+            val mergedManifest = if (existingManifest != null) {
+                diffManifests(existingManifest, newManifest)
+            } else {
+                newManifest
+            }
+
+            // Save merged manifest
+            manifestManager.save(mergedManifest)
+
+            // Phase 2: Extract only DISCOVERED entries
+            val result = performExtraction(mergedManifest)
             val duration = Clock.System.now() - startTime
 
-            val result = SyncResult(
+            result.copy(
                 syncType = SyncType.INCREMENTAL,
-                filesScanned = scanResult.totalFilesScanned,
-                filesDiscovered = scanResult.discoveredFiles.size,
-                metadataExtracted = scanResult.extractedMetadata.size,
-                metadataStored = scanResult.extractedMetadata.size,
-                metadataSkipped = 0,
-                duplicatesRemoved = scanResult.duplicatesRemoved,
-                totalErrors = scanResult.errors.size + scanResult.metadataExtractionErrors,
-                scanDuration = scanResult.scanDuration,
-                extractionDuration = scanResult.extractionDuration ?: Duration.ZERO,
                 syncDuration = duration,
-                errors = scanResult.errors.map { SyncError(it.path, it.error, it.timestamp) },
                 startTime = startTime,
                 endTime = Clock.System.now()
-            )
-
-            logger.info("Incremental sync completed: ${result.summarize()}")
-            result
-
+            ).also {
+                logger.info("Incremental sync completed: ${it.summarize()}")
+            }
         } catch (e: Exception) {
             logger.error("Incremental sync failed", e)
-            SyncResult.failed(
-                syncType = SyncType.INCREMENTAL,
-                startTime = startTime,
-                error = e
-            )
+            SyncResult.failed(syncType = SyncType.INCREMENTAL, startTime = startTime, error = e)
         } finally {
             syncFinish()
         }
+    }
+
+    /**
+     * Diff new discovery against existing manifest:
+     * - New files (path not in existing): DISCOVERED
+     * - Changed files (size/mtime differ): reset to DISCOVERED
+     * - Deleted files (in existing but not in new): removed + PDFMetadata deleted
+     * - Unchanged EXTRACTED files: kept as EXTRACTED (skipped)
+     */
+    private suspend fun diffManifests(
+        existing: DiscoveryManifest,
+        new: DiscoveryManifest
+    ): DiscoveryManifest {
+        val existingByPath = existing.files.associateBy { it.path }
+        val newByPath = new.files.associateBy { it.path }
+
+        // Handle deleted files: in existing but not in new
+        val deletedPaths = existingByPath.keys - newByPath.keys
+        for (path in deletedPaths) {
+            try {
+                val id = path.hashCode().toString()
+                repository.deletePDF(id)
+                logger.debug("Removed metadata for deleted file: $path")
+            } catch (e: Exception) {
+                logger.warn("Failed to remove metadata for deleted file: $path", e)
+            }
+        }
+        if (deletedPaths.isNotEmpty()) {
+            logger.info("Removed ${deletedPaths.size} deleted files from manifest")
+        }
+
+        // Build merged file list
+        val mergedFiles = newByPath.map { (path, newFile) ->
+            val existingFile = existingByPath[path]
+            when {
+                // New file — not in existing manifest
+                existingFile == null -> newFile.copy(status = FileStatus.DISCOVERED)
+                // Changed file — size or mtime differ
+                existingFile.fileSize != newFile.fileSize ||
+                        existingFile.lastModified != newFile.lastModified ->
+                    newFile.copy(status = FileStatus.DISCOVERED)
+                // Unchanged file — keep existing status
+                else -> newFile.copy(status = existingFile.status)
+            }
+        }
+
+        val newCount = mergedFiles.count { existingByPath[it.path] == null }
+        val changedCount = mergedFiles.count { file ->
+            val existing2 = existingByPath[file.path]
+            existing2 != null && file.status == FileStatus.DISCOVERED
+        }
+        if (newCount > 0 || changedCount > 0) {
+            logger.info("Incremental diff: $newCount new, $changedCount changed, ${deletedPaths.size} deleted")
+        }
+
+        return DiscoveryManifest(
+            lastDiscovery = new.lastDiscovery,
+            scanPaths = new.scanPaths,
+            files = mergedFiles
+        )
     }
 
     fun performSyncWithProgress(): Flow<SyncProgress> = flow {
@@ -186,28 +358,16 @@ class SyncService(
         try {
             emit(SyncProgress.ScanningStarted())
 
-            val progressListener = object : com.example.scanning.ScanProgressListener {
-                override suspend fun onDirectoryStarted(path: String) {
-                    // Directory progress is handled internally by RepositoryProgressListener
-                }
+            // Phase 1: Discovery
+            val manifest = performDiscovery()
+            emit(SyncProgress.ScanningCompleted(manifest.files.size))
 
-                override suspend fun onFileDiscovered(file: com.example.scanning.PDFFileInfo) {
-                    // Could emit file discovery progress if needed in the future
-                }
+            // Phase 2: Extraction
+            val pending = manifest.files.filter { it.status == FileStatus.DISCOVERED }
+            emit(SyncProgress.ExtractionStarted(pending.size))
 
-                override suspend fun onError(error: com.example.scanning.ScanError) {
-                    // Could emit scan errors if needed
-                }
-
-                override suspend fun onScanCompleted(result: com.example.scanning.ScanResult) {
-                    // Scan completion is handled below
-                }
-            }
-
-            // Scanner now handles scanning, extraction, and persistence
-            val scanResult = scanner.scanAndPersist(progressListener)
-
-            emit(SyncProgress.Completed(scanResult.extractedMetadata.size, Clock.System.now()))
+            val result = performExtraction(manifest)
+            emit(SyncProgress.Completed(result.metadataExtracted, Clock.System.now()))
 
         } catch (e: Exception) {
             emit(SyncProgress.Failed(e.message ?: "Unknown error", Clock.System.now()))

@@ -7,7 +7,13 @@ interface ScanProgressListener {
     suspend fun onScanCompleted(result: ScanResult)
 }
 
-class ConsoleScanProgressListener : ScanProgressListener {
+interface ExtractionProgressListener {
+    fun onExtractionStarted(totalFiles: Int)
+    fun onFileExtracted(fileName: String, current: Int, total: Int, success: Boolean)
+    fun onExtractionCompleted(extracted: Int, failed: Int, total: Int)
+}
+
+class ConsoleScanProgressListener : ScanProgressListener, ExtractionProgressListener {
     override suspend fun onDirectoryStarted(path: String) {
         println("Scanning directory: $path")
     }
@@ -31,5 +37,21 @@ class ConsoleScanProgressListener : ScanProgressListener {
         if (result.errors.isNotEmpty()) {
             println("  - Errors: ${result.errors.size}")
         }
+    }
+
+    override fun onExtractionStarted(totalFiles: Int) {
+        println("Extraction started: $totalFiles files to process")
+    }
+
+    override fun onFileExtracted(fileName: String, current: Int, total: Int, success: Boolean) {
+        val status = if (success) "OK" else "FAILED"
+        println("  [$current/$total] $fileName — $status")
+    }
+
+    override fun onExtractionCompleted(extracted: Int, failed: Int, total: Int) {
+        println("Extraction completed:")
+        println("  - Extracted: $extracted")
+        println("  - Failed: $failed")
+        println("  - Total: $total")
     }
 }

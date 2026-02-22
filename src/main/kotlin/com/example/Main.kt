@@ -94,12 +94,19 @@ fun Application.configureApplication() {
             syncService.addProgressListener(com.example.scanning.ConsoleScanProgressListener())
             logger.info("Console progress listener registered")
 
-            // Perform initial sync
-            logger.info("Starting initial sync...")
-            val syncResult = syncService.performIncrementalSync()
-            logger.info("Initial sync completed: ${syncResult.summarize()}")
+            // Phase 1: Fast discovery (blocks startup briefly)
+            logger.info("Discovering PDF files...")
+            val manifest = syncService.performDiscovery()
+            logger.info("Found ${manifest.files.size} PDFs")
 
-            logger.info("PDF Library Server fully initialized and ready!")
+            logger.info("PDF Library Server ready! (extraction running in background)")
+
+            // Phase 2: Background extraction (server is already accepting requests)
+            launch {
+                logger.info("Starting background metadata extraction...")
+                val result = syncService.performExtraction(manifest)
+                logger.info("Extraction complete: ${result.summarize()}")
+            }
 
         } catch (e: Exception) {
             logger.error("Failed to initialize PDF Library", e)
