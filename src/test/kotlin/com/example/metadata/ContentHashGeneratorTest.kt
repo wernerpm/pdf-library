@@ -153,4 +153,124 @@ class ContentHashGeneratorTest {
 
         assertNotEquals(hash1, hash2)
     }
+
+    @Test
+    fun `generateHash handles empty byte array`() {
+        val hash = generator.generateHash(ByteArray(0))
+        assertTrue(hash.isNotBlank())
+        assertTrue(hash.matches(Regex("^[A-Za-z0-9+/=]*$")))
+    }
+
+    @Test
+    fun `generateHash produces consistent hash for empty byte array`() {
+        val hash1 = generator.generateHash(ByteArray(0))
+        val hash2 = generator.generateHash(ByteArray(0))
+        assertEquals(hash1, hash2)
+    }
+
+    @Test
+    fun `generateMetadataHash with all null optional fields`() {
+        val metadata = PDFMetadata(
+            id = "test-id",
+            path = "/test/path.pdf",
+            fileName = "test.pdf",
+            fileSize = 1000L,
+            pageCount = 5,
+            createdDate = null,
+            modifiedDate = null,
+            title = null,
+            author = null,
+            subject = null,
+            creator = null,
+            producer = null,
+            keywords = emptyList(),
+            pdfVersion = null,
+            customProperties = emptyMap(),
+            contentHash = null,
+            indexedAt = Clock.System.now()
+        )
+
+        val hash = generator.generateMetadataHash(metadata)
+        assertTrue(hash.isNotBlank())
+    }
+
+    @Test
+    fun `generateMetadataHash differs when title changes`() {
+        val base = PDFMetadata(
+            id = "id", path = "/p.pdf", fileName = "p.pdf",
+            fileSize = 100L, pageCount = 1,
+            createdDate = null, modifiedDate = null,
+            title = "Title A", author = "Author",
+            subject = null, creator = null, producer = null,
+            keywords = emptyList(), pdfVersion = null,
+            customProperties = emptyMap(), contentHash = null,
+            indexedAt = Clock.System.now()
+        )
+        val modified = base.copy(title = "Title B")
+
+        assertNotEquals(
+            generator.generateMetadataHash(base),
+            generator.generateMetadataHash(modified)
+        )
+    }
+
+    @Test
+    fun `generateMetadataHash differs when author changes`() {
+        val base = PDFMetadata(
+            id = "id", path = "/p.pdf", fileName = "p.pdf",
+            fileSize = 100L, pageCount = 1,
+            createdDate = null, modifiedDate = null,
+            title = "Title", author = "Author A",
+            subject = null, creator = null, producer = null,
+            keywords = emptyList(), pdfVersion = null,
+            customProperties = emptyMap(), contentHash = null,
+            indexedAt = Clock.System.now()
+        )
+        val modified = base.copy(author = "Author B")
+
+        assertNotEquals(
+            generator.generateMetadataHash(base),
+            generator.generateMetadataHash(modified)
+        )
+    }
+
+    @Test
+    fun `generateMetadataHash differs when pageCount changes`() {
+        val base = PDFMetadata(
+            id = "id", path = "/p.pdf", fileName = "p.pdf",
+            fileSize = 100L, pageCount = 1,
+            createdDate = null, modifiedDate = null,
+            title = "Title", author = "Author",
+            subject = null, creator = null, producer = null,
+            keywords = emptyList(), pdfVersion = null,
+            customProperties = emptyMap(), contentHash = null,
+            indexedAt = Clock.System.now()
+        )
+        val modified = base.copy(pageCount = 99)
+
+        assertNotEquals(
+            generator.generateMetadataHash(base),
+            generator.generateMetadataHash(modified)
+        )
+    }
+
+    @Test
+    fun `generateMetadataHash differs when fileSize changes`() {
+        val base = PDFMetadata(
+            id = "id", path = "/p.pdf", fileName = "p.pdf",
+            fileSize = 100L, pageCount = 1,
+            createdDate = null, modifiedDate = null,
+            title = "Title", author = "Author",
+            subject = null, creator = null, producer = null,
+            keywords = emptyList(), pdfVersion = null,
+            customProperties = emptyMap(), contentHash = null,
+            indexedAt = Clock.System.now()
+        )
+        val modified = base.copy(fileSize = 999L)
+
+        assertNotEquals(
+            generator.generateMetadataHash(base),
+            generator.generateMetadataHash(modified)
+        )
+    }
 }

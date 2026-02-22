@@ -87,4 +87,76 @@ class PDFValidatorTest {
         val validator = PDFValidator(mockStorage)
         assertEquals(null, validator.getPDFVersion("/test.txt"))
     }
+
+    @Test
+    fun `getPDFVersion extracts version 1_0`() = runTest {
+        val mockStorage = MockStorageProvider()
+        mockStorage.addFile("/test.pdf", "%PDF-1.0\n".toByteArray())
+        val validator = PDFValidator(mockStorage)
+        assertEquals("1.0", validator.getPDFVersion("/test.pdf"))
+    }
+
+    @Test
+    fun `getPDFVersion extracts version 1_4`() = runTest {
+        val mockStorage = MockStorageProvider()
+        mockStorage.addFile("/test.pdf", "%PDF-1.4\n".toByteArray())
+        val validator = PDFValidator(mockStorage)
+        assertEquals("1.4", validator.getPDFVersion("/test.pdf"))
+    }
+
+    @Test
+    fun `getPDFVersion extracts version 2_0`() = runTest {
+        val mockStorage = MockStorageProvider()
+        mockStorage.addFile("/test.pdf", "%PDF-2.0\n".toByteArray())
+        val validator = PDFValidator(mockStorage)
+        assertEquals("2.0", validator.getPDFVersion("/test.pdf"))
+    }
+
+    @Test
+    fun `getPDFVersion returns null for missing version number`() = runTest {
+        val mockStorage = MockStorageProvider()
+        mockStorage.addFile("/test.pdf", "%PDF-\n".toByteArray())
+        val validator = PDFValidator(mockStorage)
+        assertEquals(null, validator.getPDFVersion("/test.pdf"))
+    }
+
+    @Test
+    fun `getPDFVersion returns null for non-existent file`() = runTest {
+        val mockStorage = MockStorageProvider()
+        val validator = PDFValidator(mockStorage)
+        assertEquals(null, validator.getPDFVersion("/nonexistent.pdf"))
+    }
+
+    @Test
+    fun `isValidPDF returns true for minimal PDF header`() = runTest {
+        val mockStorage = MockStorageProvider()
+        mockStorage.addFile("/test.pdf", "%PDF-2.0".toByteArray())
+        val validator = PDFValidator(mockStorage)
+        assertTrue(validator.isValidPDF("/test.pdf"))
+    }
+
+    @Test
+    fun `isValidPDF returns false for empty file`() = runTest {
+        val mockStorage = MockStorageProvider()
+        mockStorage.addFile("/test.pdf", ByteArray(0))
+        val validator = PDFValidator(mockStorage)
+        assertFalse(validator.isValidPDF("/test.pdf"))
+    }
+
+    @Test
+    fun `isValidPDF returns false for file starting with percent but not PDF`() = runTest {
+        val mockStorage = MockStorageProvider()
+        mockStorage.addFile("/test.pdf", "%NOT-A-PDF".toByteArray())
+        val validator = PDFValidator(mockStorage)
+        assertFalse(validator.isValidPDF("/test.pdf"))
+    }
+
+    @Test
+    fun `getPDFVersion extracts version with trailing content`() = runTest {
+        val mockStorage = MockStorageProvider()
+        // Real PDFs have binary comment after version line
+        mockStorage.addFile("/test.pdf", "%PDF-1.5\n%\u00E2\u00E3\u00CF\u00D3\n1 0 obj".toByteArray())
+        val validator = PDFValidator(mockStorage)
+        assertEquals("1.5", validator.getPDFVersion("/test.pdf"))
+    }
 }
