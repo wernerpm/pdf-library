@@ -127,6 +127,62 @@ class DiscoverFilesTest {
     }
 
     @Test
+    fun `discoverFiles calls onPartialManifest with incremental progress`() = runTest {
+        val mockStorage = MockStorageProvider()
+
+        mockStorage.addDirectory("/pdfs", listOf("sub1", "sub2", "root.pdf"))
+        mockStorage.addDirectory("/pdfs/sub1", listOf("a.pdf"))
+        mockStorage.addDirectory("/pdfs/sub2", listOf("b.pdf"))
+        mockStorage.addFile("/pdfs/root.pdf", "%PDF-1.4\nR".toByteArray())
+        mockStorage.addFile("/pdfs/sub1/a.pdf", "%PDF-1.4\nA".toByteArray())
+        mockStorage.addFile("/pdfs/sub2/b.pdf", "%PDF-1.4\nB".toByteArray())
+
+        val config = AppConfiguration(
+            pdfScanPaths = listOf("/pdfs"),
+            metadataStoragePath = "/metadata",
+            scanning = ScanConfiguration(recursive = true, validatePdfHeaders = false)
+        )
+
+        val scanner = PDFScanner(mockStorage, config)
+        val partialManifests = mutableListOf<DiscoveryManifest>()
+        val manifest = scanner.discoverFiles(onPartialManifest = { partial -> partialManifests.add(partial) })
+
+        // At least one partial save per scan path (after sub1, after sub2, after scan path)
+        assertTrue(partialManifests.isNotEmpty())
+        // All partial manifests use DISCOVERED status
+        assertTrue(partialManifests.all { m -> m.files.all { it.status == FileStatus.DISCOVERED } })
+        // Partial manifests show growing file counts
+        val sizes = partialManifests.map { it.files.size }
+        assertEquals(sizes.sorted(), sizes, "Partial manifest file counts should be non-decreasing")
+        // Final partial and final manifest both have all 3 files
+        assertEquals(3, partialManifests.last().files.size)
+        assertEquals(3, manifest.files.size)
+    }
+
+    @Test
+    fun `discoverFiles calls onPartialManifest once per scan path when no subdirectories`() = runTest {
+        val mockStorage = MockStorageProvider()
+
+        mockStorage.addDirectory("/pdfs", listOf("a.pdf", "b.pdf"))
+        mockStorage.addFile("/pdfs/a.pdf", "%PDF-1.4\nA".toByteArray())
+        mockStorage.addFile("/pdfs/b.pdf", "%PDF-1.4\nB".toByteArray())
+
+        val config = AppConfiguration(
+            pdfScanPaths = listOf("/pdfs"),
+            metadataStoragePath = "/metadata",
+            scanning = ScanConfiguration(recursive = false, validatePdfHeaders = false)
+        )
+
+        val scanner = PDFScanner(mockStorage, config)
+        val partialManifests = mutableListOf<DiscoveryManifest>()
+        scanner.discoverFiles(onPartialManifest = { partial -> partialManifests.add(partial) })
+
+        // Exactly one flush: the post-scan-path flush
+        assertEquals(1, partialManifests.size)
+        assertEquals(2, partialManifests.first().files.size)
+    }
+
+    @Test
     fun `discoverFiles with empty directory`() = runTest {
         val mockStorage = MockStorageProvider()
 

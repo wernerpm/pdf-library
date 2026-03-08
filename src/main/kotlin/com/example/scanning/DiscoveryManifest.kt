@@ -1,6 +1,8 @@
 package com.example.scanning
 
 import com.example.storage.StorageProvider
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlin.time.Instant
@@ -40,13 +42,17 @@ class DiscoveryManifestManager(
     }
 
     suspend fun save(manifest: DiscoveryManifest) {
-        try {
-            val content = json.encodeToString(DiscoveryManifest.serializer(), manifest)
-            storageProvider.write(manifestPath, content.encodeToByteArray())
-            logger.debug("Manifest saved with ${manifest.files.size} entries")
-        } catch (e: Exception) {
-            logger.error("Failed to save manifest to: $manifestPath", e)
-            throw e
+        // NonCancellable ensures the write completes even if the parent coroutine is being
+        // cancelled (e.g. on server shutdown after a long network-volume scan).
+        withContext(NonCancellable) {
+            try {
+                val content = json.encodeToString(DiscoveryManifest.serializer(), manifest)
+                storageProvider.write(manifestPath, content.encodeToByteArray())
+                logger.debug("Manifest saved with ${manifest.files.size} entries")
+            } catch (e: Exception) {
+                logger.error("Failed to save manifest to: $manifestPath", e)
+                throw e
+            }
         }
     }
 

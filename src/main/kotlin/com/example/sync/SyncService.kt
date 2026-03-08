@@ -86,10 +86,19 @@ class SyncService(
      * Returns the manifest with all discovered files.
      */
     suspend fun performDiscovery(): DiscoveryManifest {
-        logger.info("Starting discovery phase...")
-        val manifest = scanner.discoverFiles()
+        logger.info("Starting discovery phase for ${configuration.pdfScanPaths.size} scan path(s): ${configuration.pdfScanPaths}")
+        val manifest = scanner.discoverFiles(
+            onPartialManifest = { partial ->
+                logger.info("Partial manifest: ${partial.files.size} files — saving to disk")
+                manifestManager.save(partial)
+            }
+        )
+        // Save the final deduped manifest (overwrites any partial saves)
+        logger.info("Saving final manifest: ${manifest.files.size} PDFs across ${manifest.scanPaths.size} scan path(s)")
         manifestManager.save(manifest)
-        logger.info("Discovery complete: ${manifest.files.size} PDFs found in ${manifest.scanPaths.size} scan paths")
+        logger.info("Discovery complete: ${manifest.files.size} PDFs found. Per-path breakdown: ${
+            manifest.scanPaths.map { path -> "$path → ${manifest.files.count { it.path.startsWith(path) }}" }
+        }")
         return manifest
     }
 
