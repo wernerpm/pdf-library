@@ -94,18 +94,22 @@ fun Application.configureApplication() {
             syncService.addProgressListener(com.example.scanning.ConsoleScanProgressListener())
             logger.info("Console progress listener registered")
 
-            // Phase 1: Fast discovery (blocks startup briefly)
-            logger.info("Discovering PDF files...")
-            val manifest = syncService.performDiscovery()
-            logger.info("Found ${manifest.files.size} PDFs")
+            logger.info("PDF Library Server ready! (sync running in background)")
 
-            logger.info("PDF Library Server ready! (extraction running in background)")
-
-            // Phase 2: Background extraction (server is already accepting requests)
+            // Resume extraction from the existing manifest without overwriting it.
+            // This preserves progress across restarts and avoids losing entries for
+            // scan paths that may be temporarily unavailable (e.g. network volumes).
+            // If no manifest exists yet, fall back to a full sync to build one.
             launch {
-                logger.info("Starting background metadata extraction...")
-                val result = syncService.performExtraction(manifest)
-                logger.info("Extraction complete: ${result.summarize()}")
+                logger.info("Starting background metadata sync...")
+                val resumeResult = syncService.resumeExtraction()
+                if (resumeResult.errors.any { it.path == "MANIFEST" }) {
+                    logger.info("No manifest found — performing initial full sync...")
+                    val fullResult = syncService.performFullSync()
+                    logger.info("Initial sync complete: ${fullResult.summarize()}")
+                } else {
+                    logger.info("Background extraction complete: ${resumeResult.summarize()}")
+                }
             }
 
         } catch (e: Exception) {

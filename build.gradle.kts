@@ -55,6 +55,11 @@ dependencies {
 
 application {
     mainClass.set("com.example.MainKt")
+    applicationDefaultJvmArgs = listOf("-Xmx4g")
+}
+
+tasks.named<JavaExec>("run") {
+    jvmArgs("-Xmx4g")
 }
 
 tasks.test {

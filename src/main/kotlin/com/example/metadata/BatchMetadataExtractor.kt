@@ -16,11 +16,12 @@ class BatchMetadataExtractor(
     suspend fun extractBatch(files: List<PDFFileInfo>): List<PDFMetadata> {
         logger.info("Starting batch metadata extraction for ${files.size} files")
 
+        val results = mutableListOf<PDFMetadata>()
         return coroutineScope {
             files
                 .chunked(concurrency)
-                .map { chunk ->
-                    chunk.map { fileInfo ->
+                .forEach { chunk ->
+                    val chunkResults = chunk.map { fileInfo ->
                         async {
                             try {
                                 metadataExtractor.extractMetadata(fileInfo)
@@ -29,11 +30,10 @@ class BatchMetadataExtractor(
                                 null
                             }
                         }
-                    }
+                    }.awaitAll().filterNotNull()
+                    results.addAll(chunkResults)
                 }
-                .flatten()
-                .awaitAll()
-                .filterNotNull()
+            results
         }
     }
 

@@ -6,6 +6,9 @@ import com.example.metadata.MetadataExtractor
 import com.example.repository.MetadataRepository
 import com.example.scanning.*
 import com.example.storage.StorageProvider
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlin.time.Clock
@@ -23,7 +26,7 @@ class SyncService(
     private val logger = LoggerFactory.getLogger(SyncService::class.java)
     private val scanner = PDFScanner(storageProvider, configuration, repository)
     private val metadataExtractor = MetadataExtractor(storageProvider, configuration.metadataStoragePath)
-    private val batchExtractor = BatchMetadataExtractor(metadataExtractor)
+    private val batchExtractor = BatchMetadataExtractor(metadataExtractor, concurrency = 2)
     private val metadataStorage = com.example.storage.FileSystemStorage(configuration.metadataStoragePath)
     private val manifestManager = DiscoveryManifestManager(
         storageProvider = metadataStorage,
@@ -135,34 +138,45 @@ class SyncService(
         var failed = 0
         val errors = mutableListOf<SyncError>()
         val extractionDuration = measureTime {
-            val extractedMetadata = batchExtractor.extractBatch(pending)
-
-            // Persist successfully extracted metadata
-            for (metadata in extractedMetadata) {
-                try {
-                    repository.savePDF(metadata)
-                    manifestManager.updateFileStatus(metadata.path, FileStatus.EXTRACTED)
-                    extracted++
-                    logger.debug("Extracted and persisted: ${metadata.fileName}")
-                } catch (e: Exception) {
-                    manifestManager.updateFileStatus(metadata.path, FileStatus.FAILED)
-                    failed++
-                    errors.add(SyncError(metadata.path, e.message ?: "Persistence failed", Clock.System.now()))
-                    logger.error("Failed to persist metadata for ${metadata.fileName}", e)
+            // Process in small concurrent chunks and persist each chunk immediately.
+            // This gives incremental progress and allows crash recovery via the manifest.
+            pending.chunked(2).forEach { chunk ->
+                val chunkResults = coroutineScope {
+                    chunk.map { fileInfo ->
+                        async {
+                            try {
+                                metadataExtractor.extractMetadata(fileInfo)
+                            } catch (e: Exception) {
+                                logger.error("Failed to extract ${fileInfo.fileName}", e)
+                                null
+                            }
+                        }
+                    }.awaitAll()
                 }
-            }
 
-            // Mark files that failed extraction (not in extractedMetadata)
-            val extractedPaths = extractedMetadata.map { it.path }.toSet()
-            for (file in pending) {
-                if (file.path !in extractedPaths) {
+                val extractedPaths = chunkResults.filterNotNull().map { it.path }.toSet()
+                for (metadata in chunkResults.filterNotNull()) {
                     try {
-                        manifestManager.updateFileStatus(file.path, FileStatus.FAILED)
+                        repository.savePDF(metadata)
+                        manifestManager.updateFileStatus(metadata.path, FileStatus.EXTRACTED)
+                        extracted++
                     } catch (e: Exception) {
-                        logger.warn("Failed to update manifest status for ${file.path}", e)
+                        manifestManager.updateFileStatus(metadata.path, FileStatus.FAILED)
+                        failed++
+                        errors.add(SyncError(metadata.path, e.message ?: "Persistence failed", Clock.System.now()))
+                        logger.error("Failed to persist metadata for ${metadata.fileName}", e)
                     }
-                    failed++
-                    errors.add(SyncError(file.path, "Metadata extraction failed", Clock.System.now()))
+                }
+                for (file in chunk) {
+                    if (file.path !in extractedPaths) {
+                        try { manifestManager.updateFileStatus(file.path, FileStatus.FAILED) }
+                        catch (e: Exception) { logger.warn("Failed to update manifest status for ${file.path}", e) }
+                        failed++
+                        errors.add(SyncError(file.path, "Metadata extraction failed", Clock.System.now()))
+                    }
+                }
+                if ((extracted + failed) % 20 == 0 || (extracted + failed) == pending.size) {
+                    logger.info("Extraction progress: ${extracted + failed}/${pending.size} — $extracted ok, $failed failed")
                 }
             }
         }

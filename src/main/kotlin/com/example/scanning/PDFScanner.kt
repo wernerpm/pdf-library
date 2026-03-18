@@ -323,21 +323,17 @@ class PDFScanner(
                             if (discoveredFileCount >= maxFiles) {
                                 break
                             }
-                            if (!configuration.scanning.validatePdfHeaders || validator.isValidPDF(fullPath)) {
-                                val pdfFileInfo = PDFFileInfo(
-                                    path = fullPath,
-                                    fileName = item,
-                                    fileSize = metadata.size,
-                                    lastModified = metadata.modifiedAt?.let {
-                                        Instant.fromEpochSeconds(it.epochSecond, it.nano)
-                                    }
-                                )
-                                discoveredFiles.add(pdfFileInfo)
-                                discoveredFileCount++
-                                progressListener?.onFileDiscovered(pdfFileInfo)
-                            } else {
-                                invalidFilesSkipped++
-                            }
+                            val pdfFileInfo = PDFFileInfo(
+                                path = fullPath,
+                                fileName = item,
+                                fileSize = metadata.size,
+                                lastModified = metadata.modifiedAt?.let {
+                                    Instant.fromEpochSeconds(it.epochSecond, it.nano)
+                                }
+                            )
+                            discoveredFiles.add(pdfFileInfo)
+                            discoveredFileCount++
+                            progressListener?.onFileDiscovered(pdfFileInfo)
                         }
                     }
                 } catch (e: Exception) {
