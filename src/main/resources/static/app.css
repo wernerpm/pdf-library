@@ -244,12 +244,47 @@ main {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  padding: 16px;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 16px;
   background: var(--surface);
-  border-top: 1px solid var(--border);
 }
-#page-label { font-size: 13px; color: var(--text-muted); }
+.pagination-top { border-bottom: 1px solid var(--border); }
+.pagination-bottom { border-top: 1px solid var(--border); }
+
+.page-btn {
+  min-width: 34px;
+  height: 34px;
+  padding: 0 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+  line-height: 1;
+}
+.page-btn:hover:not(:disabled):not(.active) { background: var(--border); }
+.page-btn:disabled { opacity: .4; cursor: default; }
+.page-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  cursor: default;
+}
+.page-nav { font-size: 16px; }
+.page-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 34px;
+  color: var(--text-muted);
+  font-size: 13px;
+  user-select: none;
+}
 
 /* ---- Modal ---- */
 .modal-overlay {
@@ -319,8 +354,21 @@ main {
 .modal-author {
   font-size: 13px;
   color: var(--text-muted);
-  margin-bottom: 16px;
+  margin-bottom: 10px;
 }
+.btn-open-pdf {
+  display: inline-block;
+  margin-bottom: 14px;
+  padding: 6px 14px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background .15s;
+}
+.btn-open-pdf:hover { background: var(--accent-hover); }
 .meta-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 16px; }
 .meta-table tr { border-bottom: 1px solid var(--border); }
 .meta-table tr:last-child { border-bottom: none; }

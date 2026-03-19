@@ -15,23 +15,21 @@ const state = {
 
 // ---- DOM refs ----
 const $ = id => document.getElementById(id);
-const grid        = $('grid');
-const loading     = $('loading');
-const emptyState  = $('empty');
-const pagination  = $('pagination');
-const btnPrev     = $('btn-prev');
-const btnNext     = $('btn-next');
-const pageLabel   = $('page-label');
-const searchInput = $('search-input');
-const btnClear    = $('btn-clear-search');
-const sortField   = $('sort-field');
-const btnSortOrder= $('btn-sort-order');
-const pageSizeEl  = $('page-size');
-const syncStatus  = $('sync-status');
-const syncBadge   = $('sync-badge');
-const syncLabel   = $('sync-label');
-const progressFill= $('progress-bar-fill');
-const modalOverlay= $('modal-overlay');
+const grid          = $('grid');
+const loading       = $('loading');
+const emptyState    = $('empty');
+const paginationTop = $('pagination-top');
+const paginationBot = $('pagination-bottom');
+const searchInput   = $('search-input');
+const btnClear      = $('btn-clear-search');
+const sortField     = $('sort-field');
+const btnSortOrder  = $('btn-sort-order');
+const pageSizeEl    = $('page-size');
+const syncStatus    = $('sync-status');
+const syncBadge     = $('sync-badge');
+const syncLabel     = $('sync-label');
+const progressFill  = $('progress-bar-fill');
+const modalOverlay  = $('modal-overlay');
 
 // ---- API helpers ----
 async function api(path) {
@@ -55,7 +53,8 @@ async function loadPDFs() {
   loading.style.display = 'block';
   grid.style.display = 'none';
   emptyState.style.display = 'none';
-  pagination.style.display = 'none';
+  paginationTop.style.display = 'none';
+  paginationBot.style.display = 'none';
 
   try {
     const params = new URLSearchParams({
@@ -95,7 +94,6 @@ function renderGrid(pdfs) {
     card.dataset.id = pdf.id;
 
     const displayTitle = pdf.title || pdf.fileName;
-    const thumbSrc = `/api/thumbnails/${pdf.id}`;
 
     card.innerHTML = `
       <div class="card-thumb-placeholder js-thumb-wrap">
@@ -114,7 +112,7 @@ function renderGrid(pdfs) {
     img.alt = displayTitle;
     img.onload = () => thumbWrap.replaceWith(img);
     img.onerror = () => {}; // keep placeholder
-    img.src = thumbSrc;
+    img.src = `/api/thumbnails/${pdf.id}`;
 
     card.addEventListener('click', () => openModal(pdf.id));
     grid.appendChild(card);
@@ -123,13 +121,65 @@ function renderGrid(pdfs) {
   grid.style.display = 'grid';
 }
 
-function renderPagination() {
-  if (state.totalPages <= 1) return;
-  pagination.style.display = 'flex';
-  btnPrev.disabled = state.page <= 0;
-  btnNext.disabled = state.page >= state.totalPages - 1;
-  pageLabel.textContent = `Page ${state.page + 1} of ${state.totalPages}  (${state.total} PDFs)`;
+// ---- Pagination ----
+function getPageSlots(current, total) {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i);
+
+  const set = new Set([
+    0, total - 1,
+    current - 2, current - 1, current, current + 1, current + 2,
+  ]);
+  const pages = [...set].filter(p => p >= 0 && p < total).sort((a, b) => a - b);
+
+  const result = [];
+  for (let i = 0; i < pages.length; i++) {
+    if (i > 0 && pages[i] - pages[i - 1] > 1) result.push(null); // ellipsis
+    result.push(pages[i]);
+  }
+  return result;
 }
+
+function buildPaginationHTML(current, total) {
+  const slots = getPageSlots(current, total);
+  const prevDis = current === 0 ? ' disabled' : '';
+  const nextDis = current >= total - 1 ? ' disabled' : '';
+
+  const pageButtons = slots.map(p =>
+    p === null
+      ? `<span class="page-ellipsis">…</span>`
+      : `<button class="page-btn${p === current ? ' active' : ''}" data-page="${p}">${p + 1}</button>`
+  ).join('');
+
+  return `<button class="page-btn page-nav" data-page="${current - 1}"${prevDis}>←</button>
+          ${pageButtons}
+          <button class="page-btn page-nav" data-page="${current + 1}"${nextDis}>→</button>`;
+}
+
+function renderPagination() {
+  if (state.totalPages <= 1) {
+    paginationTop.style.display = 'none';
+    paginationBot.style.display = 'none';
+    return;
+  }
+  const html = buildPaginationHTML(state.page, state.totalPages);
+  paginationTop.innerHTML = html;
+  paginationBot.innerHTML = html;
+  paginationTop.style.display = 'flex';
+  paginationBot.style.display = 'flex';
+}
+
+function onPageClick(e) {
+  const btn = e.target.closest('[data-page]');
+  if (!btn || btn.disabled) return;
+  const p = Number(btn.dataset.page);
+  if (p < 0 || p >= state.totalPages || p === state.page) return;
+  state.page = p;
+  loadPDFs();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+paginationTop.addEventListener('click', onPageClick);
+paginationBot.addEventListener('click', onPageClick);
 
 // ---- Detail modal ----
 async function openModal(id) {
@@ -138,6 +188,7 @@ async function openModal(id) {
 
   $('modal-title').textContent = '…';
   $('modal-author').textContent = '';
+  $('modal-open-pdf').style.display = 'none';
   $('meta-table').innerHTML = '';
   $('text-preview-section').style.display = 'none';
   $('modal-thumbnail').src = `/api/thumbnails/${id}`;
@@ -151,32 +202,33 @@ async function openModal(id) {
     $('modal-title').textContent = pdf.title || pdf.fileName;
     $('modal-author').textContent = pdf.author || '';
 
+    const openLink = $('modal-open-pdf');
+    openLink.href = `/api/pdfs/${id}/file`;
+    openLink.style.display = '';
+
     const rows = [
-      ['Filename',   pdf.fileName],
-      ['Path',       pdf.path],
-      ['Pages',      pdf.pageCount],
-      ['File size',  formatSize(pdf.fileSize)],
-      ['PDF version',pdf.pdfVersion || '—'],
-      ['Subject',    pdf.subject || '—'],
-      ['Keywords',   pdf.keywords?.join(', ') || '—'],
-      ['Creator',    pdf.creator || '—'],
-      ['Producer',   pdf.producer || '—'],
-      ['Created',    pdf.createdDate ? new Date(pdf.createdDate).toLocaleString() : '—'],
-      ['Modified',   pdf.modifiedDate ? new Date(pdf.modifiedDate).toLocaleString() : '—'],
-      ['Indexed',    pdf.indexedAt ? new Date(pdf.indexedAt).toLocaleString() : '—'],
-      ['Encrypted',  pdf.isEncrypted ? 'Yes' : 'No'],
-      ['Signed',     pdf.isSignedPdf ? 'Yes' : 'No'],
-      ['Has text',   pdf.hasTextContent ? 'Yes' : 'No'],
+      ['Filename',    pdf.fileName],
+      ['Path',        pdf.path],
+      ['Pages',       pdf.pageCount],
+      ['File size',   formatSize(pdf.fileSize)],
+      ['PDF version', pdf.pdfVersion || '—'],
+      ['Subject',     pdf.subject || '—'],
+      ['Keywords',    pdf.keywords?.join(', ') || '—'],
+      ['Creator',     pdf.creator || '—'],
+      ['Producer',    pdf.producer || '—'],
+      ['Created',     pdf.createdDate ? new Date(pdf.createdDate).toLocaleString() : '—'],
+      ['Modified',    pdf.modifiedDate ? new Date(pdf.modifiedDate).toLocaleString() : '—'],
+      ['Indexed',     pdf.indexedAt ? new Date(pdf.indexedAt).toLocaleString() : '—'],
+      ['Encrypted',   pdf.isEncrypted ? 'Yes' : 'No'],
+      ['Signed',      pdf.isSignedPdf ? 'Yes' : 'No'],
+      ['Has text',    pdf.hasTextContent ? 'Yes' : 'No'],
     ];
 
-    const table = $('meta-table');
-    table.innerHTML = rows.map(([k, v]) =>
+    $('meta-table').innerHTML = rows.map(([k, v]) =>
       `<tr><td>${escHtml(String(k))}</td><td>${escHtml(String(v))}</td></tr>`
     ).join('');
 
-    if (pdf.hasTextContent) {
-      loadTextPreview(id);
-    }
+    if (pdf.hasTextContent) loadTextPreview(id);
   } catch (e) {
     $('modal-title').textContent = 'Error loading details';
   }
@@ -187,8 +239,7 @@ async function loadTextPreview(id) {
     const res = await fetch(`/api/pdfs/${id}/text`);
     if (!res.ok) return;
     const text = await res.text();
-    const preview = text.slice(0, 2000) + (text.length > 2000 ? '\n…' : '');
-    $('text-preview').textContent = preview;
+    $('text-preview').textContent = text.slice(0, 2000) + (text.length > 2000 ? '\n…' : '');
     $('text-preview-section').style.display = '';
   } catch (_) {}
 }
@@ -203,9 +254,9 @@ async function loadStats() {
   try {
     const resp = await api('/api/stats');
     const s = resp.data;
-    $('stat-total').textContent = `${s.totalPdfs.toLocaleString()} PDFs`;
-    $('stat-pages').textContent = `${s.totalPages.toLocaleString()} pages`;
-    $('stat-size').textContent  = formatSize(s.totalSizeBytes);
+    $('stat-total').textContent     = `${s.totalPdfs.toLocaleString()} PDFs`;
+    $('stat-pages').textContent     = `${s.totalPages.toLocaleString()} pages`;
+    $('stat-size').textContent      = formatSize(s.totalSizeBytes);
     $('stat-encrypted').textContent = `${s.encryptedCount} encrypted`;
   } catch (_) {}
 }
@@ -214,8 +265,7 @@ async function loadStats() {
 async function pollStatus() {
   try {
     const resp = await api('/status');
-    const sys = resp.data;
-    const ep = sys.extractionProgress;
+    const ep = resp.data?.extractionProgress;
     if (!ep) return;
 
     const phase = ep.phase;
@@ -242,27 +292,18 @@ async function pollStatus() {
       schedulePolling(2000);
     } else {
       stopPolling();
-      if (phase === 'COMPLETED') {
-        loadStats();
-        loadPDFs();
-      }
+      if (phase === 'COMPLETED') { loadStats(); loadPDFs(); }
     }
   } catch (_) {}
 }
 
 function schedulePolling(ms = 3000) {
   if (state.syncPollingTimer) return;
-  state.syncPollingTimer = setTimeout(() => {
-    state.syncPollingTimer = null;
-    pollStatus();
-  }, ms);
+  state.syncPollingTimer = setTimeout(() => { state.syncPollingTimer = null; pollStatus(); }, ms);
 }
 
 function stopPolling() {
-  if (state.syncPollingTimer) {
-    clearTimeout(state.syncPollingTimer);
-    state.syncPollingTimer = null;
-  }
+  if (state.syncPollingTimer) { clearTimeout(state.syncPollingTimer); state.syncPollingTimer = null; }
 }
 
 async function triggerSync(type) {
@@ -285,10 +326,8 @@ function formatSize(bytes) {
 
 function escHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ---- Event wiring ----
@@ -310,11 +349,7 @@ btnClear.addEventListener('click', () => {
   loadPDFs();
 });
 
-sortField.addEventListener('change', () => {
-  state.sort = sortField.value;
-  state.page = 0;
-  loadPDFs();
-});
+sortField.addEventListener('change', () => { state.sort = sortField.value; state.page = 0; loadPDFs(); });
 
 btnSortOrder.addEventListener('click', () => {
   state.order = state.order === 'asc' ? 'desc' : 'asc';
@@ -323,14 +358,7 @@ btnSortOrder.addEventListener('click', () => {
   loadPDFs();
 });
 
-pageSizeEl.addEventListener('change', () => {
-  state.pageSize = Number(pageSizeEl.value);
-  state.page = 0;
-  loadPDFs();
-});
-
-btnPrev.addEventListener('click', () => { state.page--; loadPDFs(); });
-btnNext.addEventListener('click', () => { state.page++; loadPDFs(); });
+pageSizeEl.addEventListener('change', () => { state.pageSize = Number(pageSizeEl.value); state.page = 0; loadPDFs(); });
 
 $('btn-incremental-sync').addEventListener('click', () => triggerSync('incremental'));
 $('btn-full-sync').addEventListener('click', () => triggerSync('full'));

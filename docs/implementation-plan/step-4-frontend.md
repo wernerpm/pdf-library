@@ -1,6 +1,6 @@
 # Step 4 — Frontend UI
 
-> Status: DONE
+> Status: DONE (v1) — improvements planned below
 
 ## Goals
 
@@ -43,11 +43,12 @@ src/main/resources/static/
 ### Pagination
 - Previous / Next buttons + page indicator
 - Page size selector (25 / 50 / 100)
+- Shown at top **and** bottom of the grid
 
 ### Detail Modal
 - Full metadata table (all PDFMetadata fields)
 - Text content preview — first 2000 chars from `/api/pdfs/{id}/text`
-- Opens PDF file path for copying
+- **"Open PDF" link** — opens the local file path in a new tab (`file://` URL) so the PDF opens in the browser or OS handler
 
 ### Sync Panel
 - Current status badge (IDLE / DISCOVERING / EXTRACTING / COMPLETED / FAILED)
@@ -59,6 +60,25 @@ src/main/resources/static/
 - Total PDFs, total pages, total size, encrypted count
 - Top authors list
 - Loaded once on startup from `GET /api/stats`
+
+## Planned Improvements
+
+### 4A — Numbered page buttons
+Replace the plain "Page N of M" label with a compact page-number bar:
+```
+← 1 2 3 4 5 … 40 →
+```
+- Show up to 7 slots: always first, always last, current ±2, ellipsis where there are gaps
+- Current page highlighted
+- Applies to both top and bottom pagination bars
+
+### 4B — Pagination top and bottom
+Duplicate the pagination controls so they appear above the grid (below the toolbar) **and** below the grid. Both are kept in sync from the same state — a single `renderPagination()` call updates both.
+
+### 4C — Open PDF from detail modal
+The modal "Open PDF" button constructs a `file://` URL from `pdf.path` and opens it with `window.open(url, '_blank')`. This lets the OS/browser handle the PDF directly. The button is shown below the metadata table.
+
+---
 
 ## Backend Changes (Main.kt)
 

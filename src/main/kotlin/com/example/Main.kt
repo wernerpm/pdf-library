@@ -266,6 +266,34 @@ fun Application.configureRouting() {
             }
         }
 
+        get("/api/pdfs/{id}/file") {
+            try {
+                if (!::repository.isInitialized) {
+                    call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
+                    return@get
+                }
+                val id = call.parameters["id"] ?: throw IllegalArgumentException("Missing PDF ID")
+                val pdf = repository.getPDF(id)
+                if (pdf == null) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("PDF not found"))
+                    return@get
+                }
+                val file = Paths.get(pdf.path)
+                if (!Files.exists(file)) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("File not found on disk"))
+                    return@get
+                }
+                call.response.header(
+                    HttpHeaders.ContentDisposition,
+                    "inline; filename=\"${pdf.fileName}\""
+                )
+                call.respondFile(file.toFile())
+            } catch (e: Exception) {
+                logger.error("Failed to serve PDF file", e)
+                call.respond(HttpStatusCode.InternalServerError, ApiResponse.error(e.message ?: "Failed to serve PDF"))
+            }
+        }
+
         get("/api/thumbnails/{id}") {
             try {
                 if (!::repository.isInitialized || !::appConfig.isInitialized) {
