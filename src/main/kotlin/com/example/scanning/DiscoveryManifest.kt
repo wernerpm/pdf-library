@@ -56,10 +56,10 @@ class DiscoveryManifestManager(
         }
     }
 
-    suspend fun updateFileStatus(path: String, status: FileStatus) {
+    suspend fun updateFileStatus(path: String, status: FileStatus, metadataPath: String? = null) {
         val manifest = load() ?: throw IllegalStateException("No manifest to update")
         val updatedFiles = manifest.files.map { file ->
-            if (file.path == path) file.copy(status = status) else file
+            if (file.path == path) file.copy(status = status, metadataPath = metadataPath ?: file.metadataPath) else file
         }
         save(manifest.copy(files = updatedFiles))
     }

@@ -11,5 +11,6 @@ data class PDFFileInfo(
     val fileSize: Long,
     val lastModified: Instant?,
     val discovered: Instant = Clock.System.now(),
-    val status: FileStatus = FileStatus.DISCOVERED
+    val status: FileStatus = FileStatus.DISCOVERED,
+    val metadataPath: String? = null
 )

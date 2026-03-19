@@ -158,7 +158,7 @@ class SyncService(
                 for (metadata in chunkResults.filterNotNull()) {
                     try {
                         repository.savePDF(metadata)
-                        manifestManager.updateFileStatus(metadata.path, FileStatus.EXTRACTED)
+                        manifestManager.updateFileStatus(metadata.path, FileStatus.EXTRACTED, "${metadata.id}.json")
                         extracted++
                     } catch (e: Exception) {
                         manifestManager.updateFileStatus(metadata.path, FileStatus.FAILED)
@@ -228,7 +228,23 @@ class SyncService(
             )
         }
         logger.info("Resuming extraction from manifest with ${manifest.files.size} total entries")
-        return performExtraction(manifest)
+
+        // Backfill metadataPath for any EXTRACTED entries that predate this field.
+        val needsBackfill = manifest.files.count { it.status == FileStatus.EXTRACTED && it.metadataPath == null }
+        val backfilledManifest = if (needsBackfill > 0) {
+            logger.info("Backfilling metadataPath for $needsBackfill already-extracted entries")
+            val updated = manifest.copy(
+                files = manifest.files.map { file ->
+                    if (file.status == FileStatus.EXTRACTED && file.metadataPath == null)
+                        file.copy(metadataPath = "${file.path.hashCode()}.json")
+                    else file
+                }
+            )
+            manifestManager.save(updated)
+            updated
+        } else manifest
+
+        return performExtraction(backfilledManifest)
     }
 
     /**
