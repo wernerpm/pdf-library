@@ -73,9 +73,10 @@ class RepositoryProgressListener(
         // Extract metadata for all files in the current directory
         for (fileInfo in currentDirectoryFiles) {
             try {
-                val metadata = metadataExtractor.extractMetadata(fileInfo)
+                val result = metadataExtractor.extractMetadata(fileInfo)
 
-                if (metadata != null) {
+                if (result != null) {
+                    val metadata = result.metadata
                     filesExtracted++
 
                     // Persist immediately after extraction

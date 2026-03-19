@@ -17,7 +17,9 @@ import java.util.*
 
 class MetadataExtractor(
     private val storageProvider: StorageProvider,
-    private val thumbnailStoragePath: String? = null
+    private val thumbnailStoragePath: String? = null,
+    private val extractTextContent: Boolean = true,
+    private val maxTextContentChars: Int = 500_000
 ) {
 
     private val logger = LoggerFactory.getLogger(MetadataExtractor::class.java)
@@ -26,8 +28,9 @@ class MetadataExtractor(
     private val contentHashGenerator = ContentHashGenerator()
     private val securePDFHandler = SecurePDFHandler()
     private val thumbnailGenerator = ThumbnailGenerator()
+    private val textContentExtractor = TextContentExtractor()
 
-    suspend fun extractMetadata(fileInfo: PDFFileInfo): PDFMetadata? {
+    suspend fun extractMetadata(fileInfo: PDFFileInfo): ExtractionResult? {
         return try {
             logger.debug("Extracting metadata from: ${fileInfo.path}")
             val pdfBytes = storageProvider.read(fileInfo.path)
@@ -41,13 +44,13 @@ class MetadataExtractor(
     private suspend fun extractFromBytes(
         pdfBytes: ByteArray,
         fileInfo: PDFFileInfo
-    ): PDFMetadata? {
+    ): ExtractionResult? {
         return withContext(Dispatchers.IO) {
             withTimeoutOrNull(PDF_PARSE_TIMEOUT_MS) {
                 try {
                     val document = Loader.loadPDF(pdfBytes)
                     try {
-                        buildPDFMetadata(document, fileInfo, pdfBytes)
+                        buildExtractionResult(document, fileInfo, pdfBytes)
                     } finally {
                         document.close()
                     }
@@ -59,7 +62,7 @@ class MetadataExtractor(
                         fileInfo.fileName,
                         fileInfo.path,
                         fileInfo.fileSize
-                    )
+                    )?.let { ExtractionResult(it, null) }
                 }
             } ?: run {
                 logger.warn("PDF parsing timed out after ${PDF_PARSE_TIMEOUT_MS}ms for ${fileInfo.path}")
@@ -72,15 +75,16 @@ class MetadataExtractor(
         private const val PDF_PARSE_TIMEOUT_MS = 60_000L // 60 seconds
     }
 
-    private fun buildPDFMetadata(
+    private fun buildExtractionResult(
         document: PDDocument,
         fileInfo: PDFFileInfo,
         pdfBytes: ByteArray
-    ): PDFMetadata {
+    ): ExtractionResult {
         // Check if we can extract metadata from this document
         if (document.isEncrypted && !securePDFHandler.canExtractMetadata(document)) {
-            return securePDFHandler.extractBasicInfo(document, fileInfo.fileName, fileInfo.path, fileInfo.fileSize)
+            val metadata = securePDFHandler.extractBasicInfo(document, fileInfo.fileName, fileInfo.path, fileInfo.fileSize)
                 ?: throw IllegalStateException("Cannot extract metadata from encrypted PDF")
+            return ExtractionResult(metadata, null)
         }
 
         // Extract document information
@@ -111,7 +115,12 @@ class MetadataExtractor(
         // Generate and save thumbnail
         val thumbnailRelativePath = generateAndSaveThumbnail(document, id)
 
-        return PDFMetadata(
+        // Extract text content if enabled
+        val textContent = if (extractTextContent) {
+            textContentExtractor.extractText(document, maxTextContentChars)
+        } else null
+
+        val metadata = PDFMetadata(
             id = id,
             path = fileInfo.path,
             fileName = fileInfo.fileName,
@@ -135,8 +144,10 @@ class MetadataExtractor(
             isEncrypted = document.isEncrypted,
             isSignedPdf = isSignedPdf,
             thumbnailPath = thumbnailRelativePath,
+            hasTextContent = textContent != null,
             indexedAt = Clock.System.now()
         )
+        return ExtractionResult(metadata, textContent)
     }
 
     private fun generateAndSaveThumbnail(document: PDDocument, id: String): String? {

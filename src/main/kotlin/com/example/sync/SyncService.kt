@@ -4,13 +4,18 @@ import com.example.config.AppConfiguration
 import com.example.metadata.BatchMetadataExtractor
 import com.example.metadata.MetadataExtractor
 import com.example.repository.MetadataRepository
+import com.example.repository.TextContentStore
 import com.example.scanning.*
 import com.example.storage.StorageProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlin.time.Clock
 import kotlin.time.Instant
 import kotlinx.serialization.Serializable
@@ -21,11 +26,17 @@ import kotlin.time.measureTime
 class SyncService(
     private val storageProvider: StorageProvider,
     private val configuration: AppConfiguration,
-    private val repository: MetadataRepository
+    private val repository: MetadataRepository,
+    private val textContentStore: TextContentStore? = null
 ) {
     private val logger = LoggerFactory.getLogger(SyncService::class.java)
     private val scanner = PDFScanner(storageProvider, configuration, repository)
-    private val metadataExtractor = MetadataExtractor(storageProvider, configuration.metadataStoragePath)
+    private val metadataExtractor = MetadataExtractor(
+        storageProvider,
+        configuration.metadataStoragePath,
+        extractTextContent = configuration.scanning.extractTextContent,
+        maxTextContentChars = configuration.scanning.maxTextContentChars
+    )
     private val batchExtractor = BatchMetadataExtractor(metadataExtractor, concurrency = 2)
     private val metadataStorage = com.example.storage.FileSystemStorage(configuration.metadataStoragePath)
     private val manifestManager = DiscoveryManifestManager(
@@ -35,6 +46,13 @@ class SyncService(
 
     @Volatile
     private var syncInProgress = false
+
+    @Volatile
+    private var _extractionProgress: ExtractionProgress = ExtractionProgress.idle()
+
+    private var fileWatcher: FileWatcher? = null
+
+    fun getExtractionProgress(): ExtractionProgress = _extractionProgress
 
     /**
      * Register a progress listener to receive scanning events
@@ -89,6 +107,11 @@ class SyncService(
      * Returns the manifest with all discovered files.
      */
     suspend fun performDiscovery(): DiscoveryManifest {
+        _extractionProgress = ExtractionProgress(
+            phase = ExtractionPhase.DISCOVERING,
+            totalFiles = 0, processedFiles = 0, successfulFiles = 0, failedFiles = 0,
+            currentFile = null, startTime = Clock.System.now()
+        )
         logger.info("Starting discovery phase for ${configuration.pdfScanPaths.size} scan path(s): ${configuration.pdfScanPaths}")
         val manifest = scanner.discoverFiles(
             onPartialManifest = { partial ->
@@ -134,6 +157,11 @@ class SyncService(
         }
 
         logger.info("Starting extraction phase: ${pending.size} files to process")
+        _extractionProgress = ExtractionProgress(
+            phase = ExtractionPhase.EXTRACTING,
+            totalFiles = pending.size, processedFiles = 0, successfulFiles = 0, failedFiles = 0,
+            currentFile = pending.firstOrNull()?.fileName, startTime = Clock.System.now()
+        )
         var extracted = 0
         var failed = 0
         val errors = mutableListOf<SyncError>()
@@ -154,11 +182,16 @@ class SyncService(
                     }.awaitAll()
                 }
 
-                val extractedPaths = chunkResults.filterNotNull().map { it.path }.toSet()
-                for (metadata in chunkResults.filterNotNull()) {
+                val extractedPaths = chunkResults.filterNotNull().map { it.metadata.path }.toSet()
+                for (result in chunkResults.filterNotNull()) {
+                    val metadata = result.metadata
                     try {
                         repository.savePDF(metadata)
                         manifestManager.updateFileStatus(metadata.path, FileStatus.EXTRACTED, "${metadata.id}.json")
+                        result.textContent?.let { text ->
+                            try { textContentStore?.save(metadata.id, text) }
+                            catch (e: Exception) { logger.warn("Failed to save text content for ${metadata.id}", e) }
+                        }
                         extracted++
                     } catch (e: Exception) {
                         manifestManager.updateFileStatus(metadata.path, FileStatus.FAILED)
@@ -175,11 +208,24 @@ class SyncService(
                         errors.add(SyncError(file.path, "Metadata extraction failed", Clock.System.now()))
                     }
                 }
+                _extractionProgress = _extractionProgress.copy(
+                    processedFiles = extracted + failed,
+                    successfulFiles = extracted,
+                    failedFiles = failed,
+                    currentFile = chunk.lastOrNull()?.fileName
+                )
                 if ((extracted + failed) % 20 == 0 || (extracted + failed) == pending.size) {
                     logger.info("Extraction progress: ${extracted + failed}/${pending.size} — $extracted ok, $failed failed")
                 }
             }
         }
+        _extractionProgress = _extractionProgress.copy(
+            phase = ExtractionPhase.COMPLETED,
+            processedFiles = extracted + failed,
+            successfulFiles = extracted,
+            failedFiles = failed,
+            currentFile = null
+        )
 
         val endTime = Clock.System.now()
         logger.info("Extraction complete: $extracted extracted, $failed failed out of ${pending.size} pending")
@@ -277,6 +323,7 @@ class SyncService(
             }
         } catch (e: Exception) {
             logger.error("Full sync failed", e)
+            _extractionProgress = _extractionProgress.copy(phase = ExtractionPhase.FAILED)
             SyncResult.failed(syncType = SyncType.FULL, startTime = startTime, error = e)
         } finally {
             syncFinish()
@@ -351,6 +398,7 @@ class SyncService(
             try {
                 val id = path.hashCode().toString()
                 repository.deletePDF(id)
+                textContentStore?.delete(id)
                 logger.debug("Removed metadata for deleted file: $path")
             } catch (e: Exception) {
                 logger.warn("Failed to remove metadata for deleted file: $path", e)
@@ -389,6 +437,41 @@ class SyncService(
             scanPaths = new.scanPaths,
             files = mergedFiles
         )
+    }
+
+    fun startFileWatching(scope: CoroutineScope) {
+        fileWatcher = FileWatcher(
+            scanPaths = configuration.pdfScanPaths,
+            debounceMs = configuration.scanning.watchDebounceMs,
+            onChangesDetected = { changes -> handleFileChanges(changes) }
+        )
+        fileWatcher!!.start(scope)
+        logger.info("File watching started")
+    }
+
+    fun stopFileWatching() {
+        fileWatcher?.stop()
+        fileWatcher = null
+    }
+
+    fun isFileWatchingEnabled(): Boolean = fileWatcher != null
+
+    private suspend fun handleFileChanges(changes: List<FileChange>) {
+        logger.info("FileWatcher: ${changes.size} change(s) detected")
+        for (change in changes.filter { it.type == FileChangeType.DELETED }) {
+            val id = change.path.hashCode().toString()
+            try {
+                repository.deletePDF(id)
+                textContentStore?.delete(id)
+                logger.debug("FileWatcher: removed metadata for deleted: ${change.path}")
+            } catch (e: Exception) {
+                logger.warn("FileWatcher: failed to remove metadata for ${change.path}", e)
+            }
+        }
+        if (changes.any { it.type != FileChangeType.DELETED }) {
+            logger.info("FileWatcher: triggering incremental sync for new/changed files")
+            performIncrementalSync()
+        }
     }
 
     fun performSyncWithProgress(): Flow<SyncProgress> = flow {

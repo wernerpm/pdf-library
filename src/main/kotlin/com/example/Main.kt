@@ -4,6 +4,7 @@ import com.example.config.AppConfiguration
 import com.example.config.ConfigurationManager
 import com.example.repository.*
 import com.example.storage.FileSystemStorage
+import com.example.sync.ExtractionProgress
 import com.example.sync.SyncService
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
@@ -14,6 +15,8 @@ import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import org.slf4j.LoggerFactory
@@ -27,6 +30,7 @@ lateinit var appConfig: AppConfiguration
 lateinit var repository: MetadataRepository
 lateinit var repositoryManager: RepositoryManager
 lateinit var syncService: SyncService
+lateinit var textContentStore: TextContentStore
 
 fun main() {
     logger.info("Starting PDF Library Server...")
@@ -63,12 +67,15 @@ fun Application.configureApplication() {
             val pdfStorage = FileSystemStorage("/")
             logger.info("PDF storage initialized for filesystem scanning")
 
+            // Initialize text content store (per-PDF full-text index)
+            textContentStore = TextContentStore(metadataStorage)
+
             // Initialize repository system with layered architecture
             // JsonRepository provides persistent storage
             val jsonRepository = JsonRepository(metadataStorage, config.metadataStoragePath)
 
             // InMemoryMetadataRepository provides caching layer on top of JsonRepository
-            val inMemoryRepository = InMemoryMetadataRepository(jsonRepository)
+            val inMemoryRepository = InMemoryMetadataRepository(jsonRepository, textContentStore)
             repository = inMemoryRepository
 
             // ConsistencyManager monitors consistency between cache and backing store
@@ -87,7 +94,7 @@ fun Application.configureApplication() {
             }
 
             // Initialize sync service (use pdfStorage for scanning, metadataStorage for metadata)
-            syncService = SyncService(pdfStorage, config, repository)
+            syncService = SyncService(pdfStorage, config, repository, textContentStore)
             logger.info("Sync service initialized")
 
             // Register console progress listener
@@ -109,6 +116,24 @@ fun Application.configureApplication() {
                     logger.info("Initial sync complete: ${fullResult.summarize()}")
                 } else {
                     logger.info("Background extraction complete: ${resumeResult.summarize()}")
+                }
+
+                // Start file watching for local paths (does not work on network volumes)
+                if (appConfig.scanning.enableFileWatching) {
+                    syncService.startFileWatching(this)
+                }
+
+                // Start scheduled incremental sync (useful for network volumes where WatchService doesn't work)
+                val intervalMinutes = appConfig.scanning.syncIntervalMinutes
+                if (intervalMinutes > 0) {
+                    launch {
+                        while (isActive) {
+                            delay(intervalMinutes * 60_000L)
+                            logger.info("Scheduled incremental sync starting (every ${intervalMinutes}m)...")
+                            val result = syncService.performIncrementalSync()
+                            logger.info("Scheduled sync complete: ${result.summarize()}")
+                        }
+                    }
                 }
             }
 
@@ -133,7 +158,9 @@ fun Application.configureRouting() {
 
                     val systemStatus = SystemStatus(
                         repository = repositoryStatus,
-                        syncInProgress = syncInProgress
+                        syncInProgress = syncInProgress,
+                        extractionProgress = syncService.getExtractionProgress(),
+                        fileWatchingEnabled = syncService.isFileWatchingEnabled()
                     )
 
                     call.respond(HttpStatusCode.OK, ApiResponse.success(systemStatus))
@@ -259,6 +286,48 @@ fun Application.configureRouting() {
             }
         }
 
+        get("/api/stats") {
+            try {
+                if (!::repository.isInitialized) {
+                    call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
+                    return@get
+                }
+                val stats = (repository as? InMemoryMetadataRepository)?.computeStats()
+                if (stats == null) {
+                    call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("Stats not available"))
+                } else {
+                    call.respond(HttpStatusCode.OK, ApiResponse.success(stats))
+                }
+            } catch (e: Exception) {
+                logger.error("Failed to compute stats", e)
+                call.respond(HttpStatusCode.InternalServerError, ApiResponse.error(e.message ?: "Failed to compute stats"))
+            }
+        }
+
+        get("/api/pdfs/{id}/text") {
+            try {
+                if (!::repository.isInitialized || !::textContentStore.isInitialized) {
+                    call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
+                    return@get
+                }
+                val id = call.parameters["id"] ?: throw IllegalArgumentException("Missing PDF ID")
+                val pdf = repository.getPDF(id)
+                if (pdf == null) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("PDF not found"))
+                    return@get
+                }
+                val text = textContentStore.get(id)
+                if (text == null) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("No text content available for this PDF"))
+                } else {
+                    call.respondText(text, ContentType.Text.Plain)
+                }
+            } catch (e: Exception) {
+                logger.error("Failed to get text content", e)
+                call.respond(HttpStatusCode.InternalServerError, ApiResponse.error(e.message ?: "Failed to get text content"))
+            }
+        }
+
         get("/api/search") {
             try {
                 if (!::repository.isInitialized) {
@@ -316,5 +385,7 @@ data class PaginatedResponse<T>(
 @Serializable
 data class SystemStatus(
     val repository: com.example.repository.RepositoryStatus,
-    val syncInProgress: Boolean
+    val syncInProgress: Boolean,
+    val extractionProgress: ExtractionProgress? = null,
+    val fileWatchingEnabled: Boolean = false
 )

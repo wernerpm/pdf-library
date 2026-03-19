@@ -47,13 +47,13 @@ class BatchMetadataExtractorTest {
         }
 
         files.forEachIndexed { index, file ->
-            coEvery { mockMetadataExtractor.extractMetadata(file) } returns expectedMetadata[index]
+            coEvery { mockMetadataExtractor.extractMetadata(file) } returns ExtractionResult(expectedMetadata[index], null)
         }
 
         val results = batchExtractor.extractBatch(files)
 
         assertEquals(3, results.size)
-        assertEquals(expectedMetadata.map { it.path }, results.map { it.path })
+        assertEquals(expectedMetadata.map { it.path }, results.map { it.metadata.path })
     }
 
     @Test
@@ -85,13 +85,13 @@ class BatchMetadataExtractorTest {
             indexedAt = Clock.System.now()
         )
 
-        coEvery { mockMetadataExtractor.extractMetadata(files[0]) } returns validMetadata
+        coEvery { mockMetadataExtractor.extractMetadata(files[0]) } returns ExtractionResult(validMetadata, null)
         coEvery { mockMetadataExtractor.extractMetadata(files[1]) } returns null
 
         val results = batchExtractor.extractBatch(files)
 
         assertEquals(1, results.size)
-        assertEquals("/test/valid.pdf", results[0].path)
+        assertEquals("/test/valid.pdf", results[0].metadata.path)
     }
 
     @Test

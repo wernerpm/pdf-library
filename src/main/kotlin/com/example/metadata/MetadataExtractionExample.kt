@@ -42,8 +42,9 @@ object MetadataExtractionExample {
         try {
             // Extract metadata from single file
             logger.info("Extracting metadata from single file...")
-            val singleMetadata = extractor.extractMetadata(exampleFiles[0])
-            singleMetadata?.let { metadata ->
+            val singleResult = extractor.extractMetadata(exampleFiles[0])
+            singleResult?.let { result ->
+                val metadata = result.metadata
                 logger.info("Successfully extracted metadata:")
                 logger.info("  Title: ${metadata.title}")
                 logger.info("  Author: ${metadata.author}")
@@ -51,18 +52,20 @@ object MetadataExtractionExample {
                 logger.info("  Size: ${metadata.fileSize} bytes")
                 logger.info("  Encrypted: ${metadata.isEncrypted}")
                 logger.info("  Custom Properties: ${metadata.customProperties}")
+                logger.info("  Has Text Content: ${result.textContent != null}")
             }
 
             // Extract metadata from multiple files with progress tracking
             logger.info("Extracting metadata from multiple files...")
-            val batchMetadata = batchExtractor.extractWithProgress(exampleFiles) { current, total ->
+            val batchResults = batchExtractor.extractWithProgress(exampleFiles) { current, total ->
                 logger.info("Progress: $current/$total files processed")
             }
 
-            logger.info("Successfully extracted metadata from ${batchMetadata.size} files")
+            logger.info("Successfully extracted metadata from ${batchResults.size} files")
 
             // Print summary
-            batchMetadata.forEach { metadata ->
+            batchResults.forEach { result ->
+                val metadata = result.metadata
                 logger.info("File: ${metadata.fileName}")
                 logger.info("  Path: ${metadata.path}")
                 logger.info("  Title: ${metadata.title ?: "No title"}")

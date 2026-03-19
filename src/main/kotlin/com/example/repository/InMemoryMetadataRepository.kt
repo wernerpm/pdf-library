@@ -1,6 +1,7 @@
 package com.example.repository
 
 import com.example.metadata.PDFMetadata
+import kotlin.time.Clock
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
@@ -12,7 +13,8 @@ import kotlin.jvm.JvmStatic
  * Delegates persistence to a backing repository while maintaining fast in-memory access.
  */
 class InMemoryMetadataRepository(
-    private val backingRepository: MetadataRepository
+    private val backingRepository: MetadataRepository,
+    private val textContentStore: TextContentStore? = null
 ) : MetadataRepository {
 
     companion object {
@@ -67,7 +69,8 @@ class InMemoryMetadataRepository(
     }
 
     override suspend fun search(query: String): List<PDFMetadata> = mutex.withLock {
-        searchEngine.searchByQuery(cache.values, query)
+        val textMatchIds = textContentStore?.searchContent(query) ?: emptySet()
+        searchEngine.searchByQuery(cache.values, query, textMatchIds)
     }
 
     override suspend fun searchByProperty(key: String, value: String): List<PDFMetadata> = mutex.withLock {
@@ -115,6 +118,7 @@ class InMemoryMetadataRepository(
 
             logger.info("Loaded ${cache.size} PDF metadata records into memory")
         }
+        textContentStore?.loadAll()
     }
 
     override suspend fun persistToStorage() = mutex.withLock {
@@ -192,6 +196,30 @@ class InMemoryMetadataRepository(
         pathIndex.clear()
         authorIndex.clear()
         titleIndex.clear()
+    }
+
+    suspend fun computeStats(): LibraryStats = mutex.withLock {
+        val allPdfs = cache.values
+        val authorCounts = allPdfs.mapNotNull { it.author }
+            .groupingBy { it }.eachCount()
+            .entries.sortedByDescending { it.value }
+            .take(10)
+            .map { AuthorCount(it.key, it.value) }
+        LibraryStats(
+            totalPdfs = allPdfs.size,
+            totalPages = allPdfs.sumOf { it.pageCount },
+            totalSizeBytes = allPdfs.sumOf { it.fileSize },
+            averagePageCount = if (allPdfs.isNotEmpty()) allPdfs.map { it.pageCount }.average() else 0.0,
+            averageFileSizeBytes = if (allPdfs.isNotEmpty()) allPdfs.sumOf { it.fileSize } / allPdfs.size else 0L,
+            oldestPdf = allPdfs.mapNotNull { it.createdDate }.minOrNull(),
+            newestPdf = allPdfs.mapNotNull { it.createdDate }.maxOrNull(),
+            topAuthors = authorCounts,
+            encryptedCount = allPdfs.count { it.isEncrypted },
+            signedCount = allPdfs.count { it.isSignedPdf },
+            withThumbnailCount = allPdfs.count { it.thumbnailPath != null },
+            pdfVersionDistribution = allPdfs.mapNotNull { it.pdfVersion }.groupingBy { it }.eachCount(),
+            computedAt = Clock.System.now()
+        )
     }
 
     suspend fun getByPath(path: String): PDFMetadata? = mutex.withLock {

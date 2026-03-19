@@ -13,10 +13,10 @@ class BatchMetadataExtractor(
 
     private val logger = LoggerFactory.getLogger(BatchMetadataExtractor::class.java)
 
-    suspend fun extractBatch(files: List<PDFFileInfo>): List<PDFMetadata> {
+    suspend fun extractBatch(files: List<PDFFileInfo>): List<ExtractionResult> {
         logger.info("Starting batch metadata extraction for ${files.size} files")
 
-        val results = mutableListOf<PDFMetadata>()
+        val results = mutableListOf<ExtractionResult>()
         return coroutineScope {
             files
                 .chunked(concurrency)
@@ -40,10 +40,10 @@ class BatchMetadataExtractor(
     suspend fun extractWithProgress(
         files: List<PDFFileInfo>,
         progressCallback: (Int, Int) -> Unit
-    ): List<PDFMetadata> {
+    ): List<ExtractionResult> {
         logger.info("Starting batch metadata extraction with progress tracking for ${files.size} files")
 
-        val results = mutableListOf<PDFMetadata>()
+        val results = mutableListOf<ExtractionResult>()
         var processed = 0
 
         return coroutineScope {
@@ -75,11 +75,11 @@ class BatchMetadataExtractor(
 
     suspend fun extractWithDetailedProgress(
         files: List<PDFFileInfo>,
-        progressCallback: (current: Int, total: Int, currentFile: String, extracted: PDFMetadata?) -> Unit
-    ): List<PDFMetadata> {
+        progressCallback: (current: Int, total: Int, currentFile: String, extracted: ExtractionResult?) -> Unit
+    ): List<ExtractionResult> {
         logger.info("Starting detailed batch metadata extraction for ${files.size} files")
 
-        val results = mutableListOf<PDFMetadata>()
+        val results = mutableListOf<ExtractionResult>()
         var processed = 0
 
         return coroutineScope {

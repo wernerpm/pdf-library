@@ -6,18 +6,17 @@ class SearchEngine {
 
     fun searchByQuery(
         metadata: Collection<PDFMetadata>,
-        query: String
+        query: String,
+        textContentMatchIds: Set<String> = emptySet()
     ): List<PDFMetadata> {
         if (query.isBlank()) return metadata.toList()
 
         val searchTerms = query.lowercase().split("\\s+".toRegex())
 
         return metadata.filter { pdf ->
-            searchTerms.all { term ->
-                matchesTerm(pdf, term)
-            }
+            searchTerms.all { term -> matchesTerm(pdf, term) } || pdf.id in textContentMatchIds
         }.sortedByDescending { pdf ->
-            calculateRelevanceScore(pdf, searchTerms)
+            calculateRelevanceScore(pdf, searchTerms, pdf.id in textContentMatchIds)
         }
     }
 
@@ -56,7 +55,8 @@ class SearchEngine {
 
     private fun calculateRelevanceScore(
         pdf: PDFMetadata,
-        searchTerms: List<String>
+        searchTerms: List<String>,
+        hasContentMatch: Boolean = false
     ): Double {
         var score = 0.0
 
@@ -73,6 +73,8 @@ class SearchEngine {
             // Custom properties get lower score
             if (pdf.customProperties.values.any { it.contains(term, ignoreCase = true) }) score += 0.5
         }
+        // Text content match bonus
+        if (hasContentMatch) score += 0.5
 
         return score
     }
