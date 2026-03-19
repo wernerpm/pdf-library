@@ -11,9 +11,9 @@
 | 1c | Metadata Extraction (PDFBox) | DONE |
 | 1d | In-Memory Repository + JSON Persistence | DONE |
 | 2 | Two-Phase Sync (Discovery + Extraction) | DONE |
-| 3 | Extraction Progress + Full-Text Search + File Watching | NOT STARTED |
+| 3 | Extraction Progress + Full-Text Search + File Watching | DONE |
+| 4 | Frontend UI | DONE |
 | 2B | Backend Improvements (Resilience, Retry, API completeness) | NOT STARTED — after frontend |
-| — | Frontend UI | NOT STARTED |
 
 ---
 
@@ -76,15 +76,20 @@
 
 ## What's Next
 
-### Step 3 — Extraction Progress + Full-Text Search + File Watching
+### Backend Improvement Phase (step 2B)
+See [`step-2b-robustness.md`](step-2b-robustness.md). All features deferred until after the frontend — now eligible to start:
+
+- **2B-1** (HIGH): `diffManifests()` SMB protection — skip deletions when a scan path returns 0 results but had N existing entries
+- **2B-2** (MEDIUM): `POST /api/sync {"type": "retry-failed"}` — reset FAILED entries and re-extract
+- **2B-3** (MEDIUM): Startup incremental scan after `resumeExtraction()` (depends on 2B-1)
+- **2B-4** (MEDIUM): `GET /api/manifest` endpoint
+- **2B-5** (LOW): Already done as part of step 4 (`sort`/`order` params on `GET /api/pdfs`)
+
+### Step 4 — Frontend UI (DONE)
+See [`step-4-frontend.md`](step-4-frontend.md).
+
+### Step 3 — Extraction Progress + Full-Text Search + File Watching (DONE)
 See [`step-3-progress-search-filewatcher.md`](step-3-progress-search-filewatcher.md).
-
-- **3A**: `ExtractionProgress` model, `GET /status` enhanced, `GET /api/stats` endpoint
-- **3B**: `TextContentExtractor` (PDFBox `PDFTextStripper`), `TextContentStore` (per-PDF `.txt` files + in-memory index), content search integrated into `SearchEngine`, `GET /api/pdfs/{id}/text` endpoint
-- **3C**: `FileWatcher` (JDK `WatchService`) for local paths + `syncIntervalMinutes` scheduled sync for network volumes (WatchService does not work on SMB/NFS mounts)
-
-### Frontend UI
-Not yet planned in detail. REST API is fully operational.
 
 ### Backend Improvement Phase (after frontend)
 See [`step-2b-robustness.md`](step-2b-robustness.md). Features deferred until after the frontend:

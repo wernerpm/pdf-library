@@ -39,7 +39,10 @@
       "Bash(sort -k5 -hr)",
       "Bash(pkill -f com.example.MainKt)",
       "Bash(ssh:*)",
-      "Bash(git show:*)"
+      "Bash(git show:*)",
+      "Bash(pkill -f pdf-library)",
+      "Bash(lsof -ti:8080)",
+      "Bash(xargs kill:*)"
     ],
     "deny": [],
     "ask": []

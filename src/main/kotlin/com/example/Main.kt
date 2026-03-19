@@ -10,6 +10,7 @@ import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
 import io.ktor.server.engine.*
+import io.ktor.server.http.content.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
 import io.ktor.server.request.*
@@ -146,8 +147,10 @@ fun Application.configureApplication() {
 
 fun Application.configureRouting() {
     routing {
+        staticResources("/static", "static")
+
         get("/") {
-            call.respondText("PDF Library - Server is running!")
+            call.respondRedirect("/static/index.html")
         }
 
         get("/status") {
@@ -201,12 +204,23 @@ fun Application.configureRouting() {
                 val page = (call.request.queryParameters["page"]?.toIntOrNull() ?: 0).coerceAtLeast(0)
                 val size = (call.request.queryParameters["size"]?.toIntOrNull() ?: 50).coerceIn(1, 500)
                 val query = call.request.queryParameters["q"]
+                val sort = call.request.queryParameters["sort"] ?: "fileName"
+                val order = call.request.queryParameters["order"] ?: "asc"
 
-                val allPdfs = if (query.isNullOrBlank()) {
+                val fetched = if (query.isNullOrBlank()) {
                     repository.getAllPDFs()
                 } else {
                     repository.search(query)
                 }
+
+                val sorted = when (sort) {
+                    "title"     -> fetched.sortedBy { (it.title ?: it.fileName).lowercase() }
+                    "author"    -> fetched.sortedBy { it.author?.lowercase() ?: "" }
+                    "indexedAt" -> fetched.sortedBy { it.indexedAt }
+                    "fileSize"  -> fetched.sortedBy { it.fileSize }
+                    else        -> fetched.sortedBy { it.fileName.lowercase() }
+                }
+                val allPdfs = if (order == "desc") sorted.reversed() else sorted
 
                 // Simple pagination
                 val startIndex = page * size

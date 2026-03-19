@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Library</title>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+
+<header>
+  <div class="header-top">
+    <h1>PDF Library</h1>
+    <div class="header-actions">
+      <button id="btn-incremental-sync" class="btn btn-secondary" title="Incremental sync">Sync</button>
+      <button id="btn-full-sync" class="btn btn-outline" title="Full rescan">Full Sync</button>
+    </div>
+  </div>
+
+  <div class="stats-bar" id="stats-bar">
+    <span class="stat-item" id="stat-total">— PDFs</span>
+    <span class="stat-sep">·</span>
+    <span class="stat-item" id="stat-pages">— pages</span>
+    <span class="stat-sep">·</span>
+    <span class="stat-item" id="stat-size">—</span>
+    <span class="stat-sep">·</span>
+    <span class="stat-item" id="stat-encrypted">— encrypted</span>
+  </div>
+
+  <div class="sync-status" id="sync-status" style="display:none">
+    <div class="sync-status-row">
+      <span class="sync-badge" id="sync-badge">IDLE</span>
+      <span id="sync-label">—</span>
+    </div>
+    <div class="progress-bar-wrap">
+      <div class="progress-bar-fill" id="progress-bar-fill" style="width:0%"></div>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <div class="search-wrap">
+      <input type="search" id="search-input" placeholder="Search titles, authors, content…" autocomplete="off" />
+      <button class="btn-clear-search" id="btn-clear-search" style="display:none" aria-label="Clear search">✕</button>
+    </div>
+    <div class="sort-wrap">
+      <select id="sort-field">
+        <option value="fileName">Filename</option>
+        <option value="title">Title</option>
+        <option value="author">Author</option>
+        <option value="fileSize">Size</option>
+        <option value="indexedAt">Date added</option>
+      </select>
+      <button id="btn-sort-order" class="btn btn-icon" title="Toggle sort order">↑</button>
+    </div>
+    <div class="page-size-wrap">
+      <select id="page-size">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+      </select>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div id="loading" class="loading-state">Loading…</div>
+  <div id="empty" class="empty-state" style="display:none">No PDFs found.</div>
+  <div id="grid" class="pdf-grid" style="display:none"></div>
+</main>
+
+<footer class="pagination" id="pagination" style="display:none">
+  <button id="btn-prev" class="btn btn-secondary" disabled>← Prev</button>
+  <span id="page-label">Page 1 of 1</span>
+  <button id="btn-next" class="btn btn-secondary" disabled>Next →</button>
+</footer>
+
+<!-- Detail Modal -->
+<div id="modal-overlay" class="modal-overlay" style="display:none">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <button class="modal-close" id="modal-close" aria-label="Close">✕</button>
+    <div class="modal-thumbnail-wrap">
+      <img id="modal-thumbnail" src="" alt="" />
+    </div>
+    <div class="modal-body">
+      <h2 id="modal-title" class="modal-pdf-title">—</h2>
+      <p id="modal-author" class="modal-author">—</p>
+      <table class="meta-table" id="meta-table"></table>
+      <details id="text-preview-section" style="display:none">
+        <summary>Text preview</summary>
+        <pre id="text-preview" class="text-preview"></pre>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
