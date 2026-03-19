@@ -310,9 +310,35 @@ if (config.scanning.enableFileWatching) {
 
 **`SystemStatus`** — Add `fileWatchingEnabled: Boolean`.
 
-### macOS Note
+### macOS and Network Volume Notes
 
-`WatchService` on macOS uses polling (not native FSEvents), so events may be delayed up to ~10 seconds. Acceptable for a library sync use case.
+`WatchService` on macOS uses polling (not native FSEvents), so events may be delayed up to ~10 seconds. Acceptable for local paths.
+
+**Important**: `WatchService` does not work on network volumes (SMB/NFS/AFP). Events are never delivered for paths under `/Volumes/...` or other mounted network shares. If any configured scan paths are on a NAS or network drive, file watching will silently do nothing for those paths.
+
+For network volume use cases, a **scheduled incremental sync** is the practical alternative:
+
+**`ScanConfiguration.kt`** — Add alongside file watching config:
+```kotlin
+val syncIntervalMinutes: Int = 0  // 0 = disabled; >0 = run incremental sync every N minutes
+```
+
+**`Main.kt`** — After starting the file watcher, also start a scheduled sync coroutine if configured:
+```kotlin
+val intervalMinutes = config.scanning.syncIntervalMinutes
+if (intervalMinutes > 0) {
+    launch {
+        while (isActive) {
+            delay(intervalMinutes * 60_000L)
+            logger.info("Scheduled incremental sync starting (every ${intervalMinutes}m)...")
+            val result = syncService.performIncrementalSync()
+            logger.info("Scheduled sync complete: ${result.summarize()}")
+        }
+    }
+}
+```
+
+File watching and scheduled sync can be enabled simultaneously — they complement each other (file watching handles local paths in near-real-time, scheduled sync handles network volumes).
 
 ---
 

@@ -52,9 +52,10 @@ java -jar build/libs/pdf-library-1.0.0.jar    # Run the built JAR directly
    - Validates data integrity
 8. SyncService created with pdfStorage, config, and repository
 9. ConsoleScanProgressListener registered
-10. Phase 1 — Discovery: fast filesystem walk, saves discovery-manifest.json (blocks briefly)
-11. Server marked as ready (API starts accepting requests)
-12. Phase 2 — Extraction: background coroutine extracts metadata for discovered files
+10. Background coroutine launched: attempts `resumeExtraction()` from existing manifest
+    - If manifest found: extract only DISCOVERED entries (resumes after crash/restart)
+    - If no manifest: falls back to `performFullSync()` (discovery + extraction)
+11. Server marked as ready immediately (API starts accepting requests)
     - Previously extracted files served from persisted PDFMetadata while extraction runs
 ```
 
@@ -79,7 +80,7 @@ Main (Ktor app)
     │   ├── DuplicateDetector
     │   └── RepositoryProgressListener (legacy scanAndPersist flow)
     ├── MetadataExtractor
-    ├── BatchMetadataExtractor (phase 2 extraction, concurrency=4)
+    ├── BatchMetadataExtractor (concurrent batch helper, concurrency=2)
     ├── DiscoveryManifestManager (load/save/update manifest)
     │   └── FileSystemStorage (metadata path)
     └── MetadataRepository (persist extracted metadata)
@@ -111,9 +112,9 @@ Main (Ktor app)
 - `PDFValidator` - Validates PDF headers (checks for `%PDF` magic bytes)
 - `DuplicateDetector` - Path-based deduplication across multiple scan paths
 - `FileStatus` - `@Serializable` enum: `DISCOVERED`, `EXTRACTED`, `FAILED`
-- `PDFFileInfo` - `@Serializable` data class: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`, `status` (FileStatus, default DISCOVERED)
+- `PDFFileInfo` - `@Serializable` data class: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`, `status` (FileStatus, default DISCOVERED), `metadataPath` (nullable, path to extracted `<id>.json` file)
 - `DiscoveryManifest` - `@Serializable` data class: `lastDiscovery`, `scanPaths`, `files` (List<PDFFileInfo>)
-- `DiscoveryManifestManager` - Manages `discovery-manifest.json` at `$metadataStoragePath/discovery-manifest.json`. Methods: `load()`, `save()` (atomic via StorageProvider), `updateFileStatus()` (load-patch-save)
+- `DiscoveryManifestManager` - Manages `discovery-manifest.json` at `$metadataStoragePath/discovery-manifest.json`. Methods: `load()`, `save()` (atomic via StorageProvider), `updateFileStatus(path, status, metadataPath?)` (load-patch-save)
 - `ScanResult` - Data class with discovered files, metadata, error counts, timing
 - `ScanProgress` / `ScanProgressListener` - Suspend callback interface: `onDirectoryStarted`, `onFileDiscovered`, `onError`, `onScanCompleted`
 - `ExtractionProgressListener` - Non-suspend callback interface: `onExtractionStarted`, `onFileExtracted`, `onExtractionCompleted`
@@ -146,9 +147,9 @@ Main (Ktor app)
 
 **Sync Service** (`src/main/kotlin/com/example/sync/`)
 - `SyncService` - Orchestrates two-phase sync (discovery + extraction). Key methods:
-  - `performDiscovery()` — Phase 1: calls `scanner.discoverFiles()`, saves manifest, returns `DiscoveryManifest`
-  - `performExtraction(manifest)` — Phase 2: filters `DISCOVERED` entries, uses `BatchMetadataExtractor`, persists to repository, updates manifest status per file
-  - `resumeExtraction()` — Loads existing manifest, processes remaining `DISCOVERED` entries (resumable after crash)
+  - `performDiscovery()` — Phase 1: calls `scanner.discoverFiles()` with incremental partial-manifest saves, returns `DiscoveryManifest`
+  - `performExtraction(manifest)` — Phase 2: filters `DISCOVERED` entries, processes in chunks of 2 concurrently via `metadataExtractor` directly (not `BatchMetadataExtractor`), persists each chunk immediately, updates manifest status (EXTRACTED + metadataPath, or FAILED) per file
+  - `resumeExtraction()` — Loads existing manifest, backfills `metadataPath` for old EXTRACTED entries, then calls `performExtraction()` for remaining `DISCOVERED` entries (resumable after crash)
   - `performFullSync()` — Discovery + extraction in sequence (guarded by `syncInProgress` flag)
   - `performIncrementalSync()` — Discovery + diff against existing manifest + extract only pending entries
   - `diffManifests()` — Compares new vs existing manifest: new files → DISCOVERED, changed (size/mtime) → DISCOVERED, deleted → removed + PDFMetadata deleted, unchanged EXTRACTED → skipped
@@ -200,7 +201,7 @@ customProperties, contentHash, isEncrypted, isSignedPdf, thumbnailPath, indexedA
 
 **Scanning/Sync Models**:
 - `FileStatus` - Enum: `DISCOVERED`, `EXTRACTED`, `FAILED`
-- `PDFFileInfo` - Lightweight file record: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`, `status`
+- `PDFFileInfo` - Lightweight file record: `path`, `fileName`, `fileSize`, `lastModified`, `discovered`, `status`, `metadataPath` (nullable — set to `"<id>.json"` after successful extraction)
 - `DiscoveryManifest` - Persisted manifest: `lastDiscovery`, `scanPaths`, `files` (List<PDFFileInfo>). Stored at `$metadataStoragePath/discovery-manifest.json` (~200 bytes/entry)
 - `SyncResult` - Sync outcome: timing, counts (scanned, discovered, extracted, stored, skipped, errors)
 - `SyncProgress` - Sealed class: Started, ScanningStarted, ScanningCompleted, ExtractionStarted, Completed, Failed, Error
@@ -281,8 +282,8 @@ Sync is split into two phases to allow the server to start accepting requests qu
 ### Phase 2: Extraction (slow, resumable, runs in background)
 ```
 1. Filter manifest for entries with status=DISCOVERED
-2. BatchMetadataExtractor.extractBatch(pending) with concurrency=4
-   └─ For each file:
+2. Process in chunks of 2 concurrently (via coroutineScope + async):
+   └─ For each file in chunk:
        ├─ MetadataExtractor.extractMetadata()
        │   ├─ Read PDF bytes via StorageProvider
        │   ├─ Load with PDFBox
@@ -292,12 +293,10 @@ Sync is split into two phases to allow the server to start accepting requests qu
        │   ├─ ThumbnailGenerator → PNG thumbnail
        │   └─ On failure: try SecurePDFHandler, then return null
        └─ Return PDFMetadata or null
-3. For each successfully extracted metadata:
-   ├─ repository.savePDF(metadata)
-   └─ manifestManager.updateFileStatus(path, EXTRACTED)
-4. For files that failed extraction:
-   └─ manifestManager.updateFileStatus(path, FAILED)
-5. Return SyncResult with counts and timing
+3. After each chunk resolves (awaitAll), persist immediately:
+   ├─ For each successful result: repository.savePDF() + manifestManager.updateFileStatus(EXTRACTED, metadataPath)
+   └─ For each failed file: manifestManager.updateFileStatus(FAILED)
+4. Return SyncResult with counts and timing
 ```
 
 ### Full Sync (`POST /api/sync` with `{"type": "full"}`)
@@ -318,10 +317,11 @@ Sync is split into two phases to allow the server to start accepting requests qu
 
 ### Startup Flow (Main.kt)
 ```
-1. Phase 1: syncService.performDiscovery() — blocks briefly
-2. Server marked ready, API starts accepting requests
-3. Phase 2: launch { syncService.performExtraction(manifest) } — background
-   Previously indexed files available via repository while extraction runs
+1. Server marked ready, API starts accepting requests immediately
+2. Background coroutine: syncService.resumeExtraction()
+   ├─ If manifest found: extract only DISCOVERED entries (crash-safe resume)
+   │   Previously extracted files available via repository while extraction runs
+   └─ If no manifest: syncService.performFullSync() (discovery + extraction)
 ```
 
 ### Resume After Crash
