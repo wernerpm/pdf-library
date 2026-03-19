@@ -1,6 +1,15 @@
 # Step 2: Two-Phase Sync (Discovery + Extraction)
 
-> **Status**: NOT STARTED
+> **Status**: DONE
+
+## Implementation Notes (divergences from plan)
+
+- **`PDFFileInfo`** gained a `metadataPath: String? = null` field (not in the original plan) so the manifest tracks which `<id>.json` file corresponds to each extracted entry.
+- **`updateFileStatus()`** takes an optional `metadataPath` parameter: `updateFileStatus(path, status, metadataPath?)`.
+- **`performExtraction()`** does inline chunked coroutines with `concurrency = 2` directly via `MetadataExtractor`, rather than delegating to `BatchMetadataExtractor.extractBatch()`. This gives immediate per-chunk persistence instead of waiting for the entire batch.
+- **Startup flow** uses `resumeExtraction()` with a fallback to `performFullSync()` when no manifest exists — rather than the plan's explicit discovery-first-then-background-extraction sequence. The server becomes ready immediately without any blocking discovery phase on startup.
+- **Partial manifest saves** during discovery: `discoverFiles()` saves the manifest incrementally after each top-level subdirectory, not just at the end. This protects against data loss if the server is killed mid-scan.
+- **`resumeExtraction()` backfill**: on load, any `EXTRACTED` entries that predate the `metadataPath` field are backfilled using `path.hashCode().toString()` so old manifests migrate cleanly.
 
 ## Problem
 

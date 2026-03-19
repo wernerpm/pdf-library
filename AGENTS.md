@@ -8,6 +8,12 @@ This is a high-performance PDF management application built with Kotlin + Ktor. 
 
 **Technology Stack**: Kotlin 2.3.10 (JVM 21) • Ktor 3.4.0 • Apache PDFBox 3.0.6 • kotlinx-serialization 1.8.0 • kotlinx-coroutines 1.10.2 • kotlinx-datetime 0.7.1 • Gradle with Kotlin DSL
 
+## Implementation Status
+
+See [`docs/implementation-plan/current-status.md`](docs/implementation-plan/current-status.md) for a full breakdown of what's built, what's next, and known deviations from the original plans.
+
+**Summary**: Steps 1a–1d and Step 2 are complete. Step 3 (progress, full-text search, file watching) is next. Frontend is after that. Backend improvements (Step 2B) are deferred until after the frontend.
+
 ## Dev Environment Tips
 
 - Use `./gradlew projects` to see all available project modules instead of scanning with `ls`
