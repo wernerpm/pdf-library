@@ -31,9 +31,24 @@ const syncLabel     = $('sync-label');
 const progressFill  = $('progress-bar-fill');
 const modalOverlay  = $('modal-overlay');
 
+// ---- Auth helpers ----
+function authHeaders(extra = {}) {
+  const token = localStorage.getItem('jwt');
+  return token ? { 'Authorization': `Bearer ${token}`, ...extra } : { ...extra };
+}
+
+function handleUnauthorized(res) {
+  if (res.status === 401) {
+    localStorage.removeItem('jwt');
+    window.location.href = '/login';
+    throw new Error('Session expired');
+  }
+}
+
 // ---- API helpers ----
 async function api(path) {
-  const res = await fetch(path);
+  const res = await fetch(path, { headers: authHeaders() });
+  handleUnauthorized(res);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -41,9 +56,10 @@ async function api(path) {
 async function apiPost(path, body) {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
   });
+  handleUnauthorized(res);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
@@ -236,7 +252,7 @@ async function openModal(id) {
 
 async function loadTextPreview(id) {
   try {
-    const res = await fetch(`/api/pdfs/${id}/text`);
+    const res = await fetch(`/api/pdfs/${id}/text`, { headers: authHeaders() });
     if (!res.ok) return;
     const text = await res.text();
     $('text-preview').textContent = text.slice(0, 2000) + (text.length > 2000 ? '\n…' : '');

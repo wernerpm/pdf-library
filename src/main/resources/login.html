@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Library — Sign in</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #e8e8e8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+    }
+    .card {
+      background: #1c1c1c;
+      border: 1px solid #333;
+      border-radius: 12px;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 380px;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+    }
+    h1 { font-size: 1.5rem; margin: 0; text-align: center; }
+    .subtitle { color: #999; text-align: center; font-size: 0.9rem; margin: 0; }
+    .btn {
+      width: 100%;
+      padding: 0.75rem 1rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn-primary { background: #4f80ff; color: #fff; font-weight: 600; }
+    .btn-primary:not(:disabled):hover { opacity: 0.88; }
+    .btn-secondary { background: #2a2a2a; color: #e8e8e8; border: 1px solid #444; }
+    .btn-secondary:not(:disabled):hover { background: #333; }
+    .status {
+      text-align: center;
+      font-size: 0.88rem;
+      min-height: 1.2em;
+      color: #aaa;
+    }
+    .status.error { color: #f87171; }
+    .status.success { color: #4ade80; }
+    details { border-top: 1px solid #2a2a2a; padding-top: 1rem; }
+    summary { cursor: pointer; color: #888; font-size: 0.85rem; }
+    .reg-fields { display: flex; flex-direction: column; gap: 0.75rem; margin-top: 0.75rem; }
+    input[type="text"] {
+      width: 100%;
+      padding: 0.6rem 0.75rem;
+      background: #111;
+      border: 1px solid #444;
+      border-radius: 6px;
+      color: #e8e8e8;
+      font-size: 0.95rem;
+    }
+    input[type="text"]:focus { outline: none; border-color: #4f80ff; }
+    label { font-size: 0.85rem; color: #aaa; }
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>PDF Library</h1>
+  <p class="subtitle">Sign in with your passkey</p>
+
+  <button id="btn-login" class="btn btn-primary">Sign in with passkey</button>
+  <div id="status" class="status"></div>
+
+  <details id="reg-section">
+    <summary>Register a new device</summary>
+    <div class="reg-fields">
+      <div>
+        <label for="reg-username">Username</label>
+        <input type="text" id="reg-username" placeholder="e.g. werner" autocomplete="username" />
+      </div>
+      <div>
+        <label for="reg-displayname">Display name</label>
+        <input type="text" id="reg-displayname" placeholder="e.g. Werner" autocomplete="name" />
+      </div>
+      <button id="btn-register" class="btn btn-secondary">Register this device</button>
+    </div>
+  </details>
+</div>
+
+<script>
+'use strict';
+
+const statusEl = document.getElementById('status');
+function showStatus(msg, type = '') {
+  statusEl.textContent = msg;
+  statusEl.className = 'status' + (type ? ' ' + type : '');
+}
+
+// ---- Base64url helpers ----
+function bufToB64url(buf) {
+  const bytes = new Uint8Array(buf);
+  let s = '';
+  for (const b of bytes) s += String.fromCharCode(b);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+}
+
+function b64urlToBuf(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  const bin = atob(s);
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return buf.buffer;
+}
+
+// Convert all known binary fields in creation options from base64url to ArrayBuffer
+function prepareCreationOptions(opts) {
+  opts.challenge = b64urlToBuf(opts.challenge);
+  opts.user.id = b64urlToBuf(opts.user.id);
+  if (opts.excludeCredentials) {
+    opts.excludeCredentials = opts.excludeCredentials.map(c => ({ ...c, id: b64urlToBuf(c.id) }));
+  }
+  return opts;
+}
+
+// Convert all known binary fields in request options from base64url to ArrayBuffer
+function prepareRequestOptions(opts) {
+  opts.challenge = b64urlToBuf(opts.challenge);
+  if (opts.allowCredentials) {
+    opts.allowCredentials = opts.allowCredentials.map(c => ({ ...c, id: b64urlToBuf(c.id) }));
+  }
+  return opts;
+}
+
+function serializeAssertion(cred) {
+  return {
+    id: cred.id,
+    rawId: bufToB64url(cred.rawId),
+    type: cred.type,
+    response: {
+      authenticatorData: bufToB64url(cred.response.authenticatorData),
+      clientDataJSON: bufToB64url(cred.response.clientDataJSON),
+      signature: bufToB64url(cred.response.signature),
+      userHandle: cred.response.userHandle ? bufToB64url(cred.response.userHandle) : null,
+    },
+  };
+}
+
+function serializeAttestation(cred) {
+  return {
+    id: cred.id,
+    rawId: bufToB64url(cred.rawId),
+    type: cred.type,
+    response: {
+      attestationObject: bufToB64url(cred.response.attestationObject),
+      clientDataJSON: bufToB64url(cred.response.clientDataJSON),
+    },
+  };
+}
+
+// ---- Login ----
+document.getElementById('btn-login').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-login');
+  btn.disabled = true;
+  showStatus('Waiting for passkey…');
+  try {
+    const startRes = await fetch('/api/auth/login/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: '' }),
+    });
+    if (!startRes.ok) throw new Error('Login start failed');
+    const startData = await startRes.json();
+    const { sessionId, options } = startData.data;
+
+    const pkOptions = prepareRequestOptions(options.publicKey);
+    const credential = await navigator.credentials.get({ publicKey: pkOptions });
+    if (!credential) throw new Error('No credential returned');
+
+    const finishRes = await fetch('/api/auth/login/finish', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId, credential: serializeAssertion(credential) }),
+    });
+    if (!finishRes.ok) {
+      const err = await finishRes.json().catch(() => ({}));
+      throw new Error(err.error || 'Login failed');
+    }
+    const finishData = await finishRes.json();
+    localStorage.setItem('jwt', finishData.data.token);
+    showStatus('Signed in! Redirecting…', 'success');
+    window.location.href = '/';
+  } catch (e) {
+    showStatus(e.message || 'Login failed', 'error');
+    btn.disabled = false;
+  }
+});
+
+// ---- Registration ----
+document.getElementById('btn-register').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-register');
+  const username = document.getElementById('reg-username').value.trim();
+  const displayName = document.getElementById('reg-displayname').value.trim();
+  if (!username) { showStatus('Username is required', 'error'); return; }
+
+  btn.disabled = true;
+  showStatus('Starting registration…');
+  try {
+    const token = localStorage.getItem('jwt');
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+
+    const startRes = await fetch('/api/auth/register/start', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ username, displayName: displayName || username }),
+    });
+    if (!startRes.ok) {
+      const err = await startRes.json().catch(() => ({}));
+      throw new Error(err.error || 'Registration start failed');
+    }
+    const startData = await startRes.json();
+    const { sessionId, options } = startData.data;
+
+    const pkOptions = prepareCreationOptions(options.publicKey);
+    const credential = await navigator.credentials.create({ publicKey: pkOptions });
+    if (!credential) throw new Error('No credential created');
+
+    const finishRes = await fetch('/api/auth/register/finish', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        sessionId,
+        credential: serializeAttestation(credential),
+        username,
+        displayName: displayName || username,
+      }),
+    });
+    if (!finishRes.ok) {
+      const err = await finishRes.json().catch(() => ({}));
+      throw new Error(err.error || 'Registration failed');
+    }
+    showStatus('Device registered! You can now sign in.', 'success');
+  } catch (e) {
+    showStatus(e.message || 'Registration failed', 'error');
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>

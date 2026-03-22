@@ -45,6 +45,14 @@ dependencies {
     // DateTime handling
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
 
+    // WebAuthn server-side
+    implementation("com.yubico:webauthn-server-core:2.5.4")
+
+    // JWT auth
+    implementation("io.ktor:ktor-server-auth:3.4.0")
+    implementation("io.ktor:ktor-server-auth-jwt:3.4.0")
+    implementation("com.auth0:java-jwt:4.4.0")
+
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter:5.14.2")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")

@@ -1,5 +1,9 @@
 package com.example
 
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
+import com.example.auth.AuthService
+import com.example.auth.AuthStore
 import com.example.config.AppConfiguration
 import com.example.config.ScanConfiguration
 import com.example.metadata.PDFMetadata
@@ -22,6 +26,8 @@ import com.example.sync.ExtractionProgress
 import com.example.sync.SyncResult
 import com.example.sync.SyncService
 import com.example.sync.SyncType
+import io.ktor.client.*
+import io.ktor.client.plugins.*
 import io.ktor.client.request.*
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -42,6 +48,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.time.Clock
 import kotlin.time.Duration
+import java.util.Date
 
 // ---- fake backing repository for InMemoryMetadataRepository ----
 private class FakeBackingRepo : MetadataRepository {
@@ -63,6 +70,13 @@ class MainApiTest {
 
     private lateinit var tempDir: java.io.File
     private val json = Json { ignoreUnknownKeys = true }
+    private val testSecret = "test-jwt-secret-32-bytes-minimum!"
+
+    private fun validToken() = JWT.create()
+        .withIssuer("localhost")
+        .withSubject("testuser")
+        .withExpiresAt(Date(System.currentTimeMillis() + 8 * 3600 * 1000L))
+        .sign(Algorithm.HMAC256(testSecret))
 
     private fun testPdf(id: String, title: String? = null, author: String? = null) = PDFMetadata(
         id = id,
@@ -98,8 +112,16 @@ class MainApiTest {
         appConfig = AppConfiguration(
             pdfScanPaths = listOf(tempDir.absolutePath),
             metadataStoragePath = tempDir.absolutePath,
-            scanning = ScanConfiguration()
+            scanning = ScanConfiguration(),
+            rpId = "localhost",
+            rpName = "Test Library",
+            jwtIssuer = "localhost"
         )
+        jwtSecret = testSecret
+
+        val authStore = AuthStore(metadataStorage)
+        runBlocking { authStore.loadFromDisk() }
+        authService = AuthService(appConfig.rpId, appConfig.rpName, authStore)
 
         textContentStore = TextContentStore(metadataStorage)
 
@@ -151,12 +173,16 @@ class MainApiTest {
         tempDir.deleteRecursively()
     }
 
-    private fun testApp(block: suspend ApplicationTestBuilder.() -> Unit) = testApplication {
+    private fun testApp(block: suspend ApplicationTestBuilder.(HttpClient) -> Unit) = testApplication {
         application {
             configureContentNegotiation()
+            configureAuth()
             configureRouting()
         }
-        block()
+        val c = createClient {
+            install(DefaultRequest) { header(HttpHeaders.Authorization, "Bearer ${validToken()}") }
+        }
+        block(c)
     }
 
     private fun JsonElement.str(key: String) = jsonObject[key]?.jsonPrimitive?.content
@@ -168,10 +194,12 @@ class MainApiTest {
     // ---- Redirect ----
 
     @Test
-    fun `GET slash redirects to static index`() = testApp {
-        // Use a non-redirecting client so we can inspect the 302 response itself
-        val noRedirectClient = createClient { followRedirects = false }
-        val response = noRedirectClient.get("/")
+    fun `GET slash redirects to static index`() = testApp { c ->
+        val noRedirect = createClient {
+            followRedirects = false
+            install(DefaultRequest) { header(HttpHeaders.Authorization, "Bearer ${validToken()}") }
+        }
+        val response = noRedirect.get("/")
         assertEquals(HttpStatusCode.Found, response.status)
         assertTrue(response.headers[HttpHeaders.Location]?.contains("index.html") == true)
     }
@@ -179,8 +207,8 @@ class MainApiTest {
     // ---- GET /api/pdfs ----
 
     @Test
-    fun `GET api-pdfs returns 200 with paginated result`() = testApp {
-        val response = client.get("/api/pdfs")
+    fun `GET api-pdfs returns 200 with paginated result`() = testApp { c ->
+        val response = c.get("/api/pdfs")
         assertEquals(HttpStatusCode.OK, response.status)
         val body = json.parseToJsonElement(response.bodyAsText())
         assertEquals(true, body.bool("success"))
@@ -191,8 +219,8 @@ class MainApiTest {
     }
 
     @Test
-    fun `GET api-pdfs pagination slices correctly`() = testApp {
-        val response = client.get("/api/pdfs?page=0&size=1")
+    fun `GET api-pdfs pagination slices correctly`() = testApp { c ->
+        val response = c.get("/api/pdfs?page=0&size=1")
         assertEquals(HttpStatusCode.OK, response.status)
         val data = json.parseToJsonElement(response.bodyAsText()).obj("data")!!
         assertEquals(1, data.arr("data")!!.size)
@@ -201,16 +229,16 @@ class MainApiTest {
     }
 
     @Test
-    fun `GET api-pdfs page beyond total returns empty data list`() = testApp {
-        val response = client.get("/api/pdfs?page=99&size=50")
+    fun `GET api-pdfs page beyond total returns empty data list`() = testApp { c ->
+        val response = c.get("/api/pdfs?page=99&size=50")
         assertEquals(HttpStatusCode.OK, response.status)
         val data = json.parseToJsonElement(response.bodyAsText()).obj("data")!!
         assertEquals(0, data.arr("data")!!.size)
     }
 
     @Test
-    fun `GET api-pdfs with search query returns results`() = testApp {
-        val response = client.get("/api/pdfs?q=Alpha")
+    fun `GET api-pdfs with search query returns results`() = testApp { c ->
+        val response = c.get("/api/pdfs?q=Alpha")
         assertEquals(HttpStatusCode.OK, response.status)
         val data = json.parseToJsonElement(response.bodyAsText()).obj("data")!!
         val results = data.arr("data")!!
@@ -219,8 +247,8 @@ class MainApiTest {
     }
 
     @Test
-    fun `GET api-pdfs sort by title desc puts Beta first`() = testApp {
-        val response = client.get("/api/pdfs?sort=title&order=desc")
+    fun `GET api-pdfs sort by title desc puts Beta first`() = testApp { c ->
+        val response = c.get("/api/pdfs?sort=title&order=desc")
         assertEquals(HttpStatusCode.OK, response.status)
         val items = json.parseToJsonElement(response.bodyAsText()).obj("data")!!.arr("data")!!
         assertEquals("Beta Book", items[0].str("title"))
@@ -228,8 +256,8 @@ class MainApiTest {
     }
 
     @Test
-    fun `GET api-pdfs sort by title asc puts Alpha first`() = testApp {
-        val response = client.get("/api/pdfs?sort=title&order=asc")
+    fun `GET api-pdfs sort by title asc puts Alpha first`() = testApp { c ->
+        val response = c.get("/api/pdfs?sort=title&order=asc")
         assertEquals(HttpStatusCode.OK, response.status)
         val items = json.parseToJsonElement(response.bodyAsText()).obj("data")!!.arr("data")!!
         assertEquals("Alpha Book", items[0].str("title"))
@@ -238,8 +266,8 @@ class MainApiTest {
     // ---- GET /api/pdfs/{id} ----
 
     @Test
-    fun `GET api-pdfs by id returns 200 for existing pdf`() = testApp {
-        val response = client.get("/api/pdfs/pdf1")
+    fun `GET api-pdfs by id returns 200 for existing pdf`() = testApp { c ->
+        val response = c.get("/api/pdfs/pdf1")
         assertEquals(HttpStatusCode.OK, response.status)
         val data = json.parseToJsonElement(response.bodyAsText()).obj("data")!!
         assertEquals("pdf1", data.str("id"))
@@ -247,8 +275,8 @@ class MainApiTest {
     }
 
     @Test
-    fun `GET api-pdfs by id returns 404 for missing pdf`() = testApp {
-        val response = client.get("/api/pdfs/nonexistent")
+    fun `GET api-pdfs by id returns 404 for missing pdf`() = testApp { c ->
+        val response = c.get("/api/pdfs/nonexistent")
         assertEquals(HttpStatusCode.NotFound, response.status)
         val body = json.parseToJsonElement(response.bodyAsText())
         assertEquals(false, body.bool("success"))
@@ -257,59 +285,58 @@ class MainApiTest {
     // ---- GET /api/pdfs/{id}/text ----
 
     @Test
-    fun `GET api-pdfs text returns 404 when no text content`() = testApp {
-        val response = client.get("/api/pdfs/pdf1/text")
+    fun `GET api-pdfs text returns 404 when no text content`() = testApp { c ->
+        val response = c.get("/api/pdfs/pdf1/text")
         assertEquals(HttpStatusCode.NotFound, response.status)
     }
 
     @Test
-    fun `GET api-pdfs text returns 200 with stored text`() = testApp {
+    fun `GET api-pdfs text returns 200 with stored text`() = testApp { c ->
         runBlocking { textContentStore.save("pdf1", "hello world content") }
-        val response = client.get("/api/pdfs/pdf1/text")
+        val response = c.get("/api/pdfs/pdf1/text")
         assertEquals(HttpStatusCode.OK, response.status)
         assertTrue(response.bodyAsText().contains("hello world content"))
     }
 
     @Test
-    fun `GET api-pdfs text returns 404 for unknown id`() = testApp {
-        val response = client.get("/api/pdfs/unknown/text")
+    fun `GET api-pdfs text returns 404 for unknown id`() = testApp { c ->
+        val response = c.get("/api/pdfs/unknown/text")
         assertEquals(HttpStatusCode.NotFound, response.status)
     }
 
     // ---- GET /api/pdfs/{id}/file ----
 
     @Test
-    fun `GET api-pdfs file returns 404 when file not on disk`() = testApp {
-        val response = client.get("/api/pdfs/pdf1/file")
+    fun `GET api-pdfs file returns 404 when file not on disk`() = testApp { c ->
+        val response = c.get("/api/pdfs/pdf1/file")
         assertEquals(HttpStatusCode.NotFound, response.status)
     }
 
     @Test
-    fun `GET api-pdfs file returns 404 for unknown id`() = testApp {
-        val response = client.get("/api/pdfs/unknown/file")
+    fun `GET api-pdfs file returns 404 for unknown id`() = testApp { c ->
+        val response = c.get("/api/pdfs/unknown/file")
         assertEquals(HttpStatusCode.NotFound, response.status)
     }
 
     // ---- GET /api/thumbnails/{id} ----
 
     @Test
-    fun `GET api-thumbnails returns 404 when no thumbnail`() = testApp {
-        val response = client.get("/api/thumbnails/pdf1")
-        // pdf1 has thumbnailPath=null
+    fun `GET api-thumbnails returns 404 when no thumbnail`() = testApp { c ->
+        val response = c.get("/api/thumbnails/pdf1")
         assertEquals(HttpStatusCode.NotFound, response.status)
     }
 
     @Test
-    fun `GET api-thumbnails returns 404 for unknown id`() = testApp {
-        val response = client.get("/api/thumbnails/nonexistent")
+    fun `GET api-thumbnails returns 404 for unknown id`() = testApp { c ->
+        val response = c.get("/api/thumbnails/nonexistent")
         assertEquals(HttpStatusCode.NotFound, response.status)
     }
 
     // ---- GET /api/stats ----
 
     @Test
-    fun `GET api-stats returns 200 with library stats`() = testApp {
-        val response = client.get("/api/stats")
+    fun `GET api-stats returns 200 with library stats`() = testApp { c ->
+        val response = c.get("/api/stats")
         assertEquals(HttpStatusCode.OK, response.status)
         val data = json.parseToJsonElement(response.bodyAsText()).obj("data")!!
         assertNotNull(data.int("totalPdfs"))
@@ -319,8 +346,8 @@ class MainApiTest {
     // ---- GET /status ----
 
     @Test
-    fun `GET status returns 200 with system status`() = testApp {
-        val response = client.get("/status")
+    fun `GET status returns 200 with system status`() = testApp { c ->
+        val response = c.get("/status")
         assertEquals(HttpStatusCode.OK, response.status)
         val data = json.parseToJsonElement(response.bodyAsText()).obj("data")!!
         assertNotNull(data.bool("syncInProgress"))
@@ -330,15 +357,14 @@ class MainApiTest {
     // ---- GET /api/manifest ----
 
     @Test
-    fun `GET api-manifest returns 404 when no manifest exists`() = testApp {
-        // syncService.loadManifest() is stubbed to return null
-        val response = client.get("/api/manifest")
+    fun `GET api-manifest returns 404 when no manifest exists`() = testApp { c ->
+        val response = c.get("/api/manifest")
         assertEquals(HttpStatusCode.NotFound, response.status)
         assertEquals(false, json.parseToJsonElement(response.bodyAsText()).bool("success"))
     }
 
     @Test
-    fun `GET api-manifest returns 200 with counts when manifest exists`() = testApp {
+    fun `GET api-manifest returns 200 with counts when manifest exists`() = testApp { c ->
         val manifest = DiscoveryManifest(
             lastDiscovery = Clock.System.now(),
             scanPaths = listOf("/books"),
@@ -350,7 +376,7 @@ class MainApiTest {
         )
         coEvery { syncService.loadManifest() } returns manifest
 
-        val response = client.get("/api/manifest")
+        val response = c.get("/api/manifest")
         assertEquals(HttpStatusCode.OK, response.status)
         val data = json.parseToJsonElement(response.bodyAsText()).obj("data")!!
         assertEquals(3, data.int("totalFiles"))
@@ -365,8 +391,8 @@ class MainApiTest {
     // ---- POST /api/sync ----
 
     @Test
-    fun `POST api-sync full returns 200`() = testApp {
-        val response = client.post("/api/sync") {
+    fun `POST api-sync full returns 200`() = testApp { c ->
+        val response = c.post("/api/sync") {
             contentType(ContentType.Application.Json)
             setBody("""{"type":"full"}""")
         }
@@ -375,8 +401,8 @@ class MainApiTest {
     }
 
     @Test
-    fun `POST api-sync incremental returns 200`() = testApp {
-        val response = client.post("/api/sync") {
+    fun `POST api-sync incremental returns 200`() = testApp { c ->
+        val response = c.post("/api/sync") {
             contentType(ContentType.Application.Json)
             setBody("""{"type":"incremental"}""")
         }
@@ -385,8 +411,8 @@ class MainApiTest {
     }
 
     @Test
-    fun `POST api-sync retry-failed returns 200`() = testApp {
-        val response = client.post("/api/sync") {
+    fun `POST api-sync retry-failed returns 200`() = testApp { c ->
+        val response = c.post("/api/sync") {
             contentType(ContentType.Application.Json)
             setBody("""{"type":"retry-failed"}""")
         }
@@ -395,8 +421,8 @@ class MainApiTest {
     }
 
     @Test
-    fun `POST api-sync with invalid type returns 500`() = testApp {
-        val response = client.post("/api/sync") {
+    fun `POST api-sync with invalid type returns 500`() = testApp { c ->
+        val response = c.post("/api/sync") {
             contentType(ContentType.Application.Json)
             setBody("""{"type":"bogus"}""")
         }
