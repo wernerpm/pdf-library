@@ -294,6 +294,48 @@ class SyncService(
     }
 
     /**
+     * Expose the current manifest for API consumers (2B-4).
+     */
+    suspend fun loadManifest(): com.example.scanning.DiscoveryManifest? = manifestManager.load()
+
+    /**
+     * Reset all FAILED entries to DISCOVERED and re-run extraction (2B-2).
+     */
+    suspend fun performRetryFailed(): SyncResult {
+        if (!syncStart()) {
+            logger.warn("Retry-failed requested but sync is already in progress")
+            return SyncResult.alreadyInProgress(SyncType.RETRY_FAILED)
+        }
+        val startTime = Clock.System.now()
+        return try {
+            val manifest = manifestManager.load()
+                ?: return SyncResult.failed(
+                    SyncType.RETRY_FAILED, startTime,
+                    Exception("No manifest found — run a full sync first")
+                ) // finally block calls syncFinish()
+
+            val failedCount = manifest.files.count { it.status == FileStatus.FAILED }
+            logger.info("Resetting $failedCount FAILED entries to DISCOVERED for retry")
+            val resetManifest = manifest.copy(
+                files = manifest.files.map { file ->
+                    if (file.status == FileStatus.FAILED)
+                        file.copy(status = FileStatus.DISCOVERED, metadataPath = null)
+                    else file
+                }
+            )
+            manifestManager.save(resetManifest)
+            performExtraction(resetManifest)
+                .copy(syncType = SyncType.RETRY_FAILED, startTime = startTime, endTime = Clock.System.now())
+                .also { logger.info("Retry-failed complete: ${it.summarize()}") }
+        } catch (e: Exception) {
+            logger.error("Retry-failed sync failed", e)
+            SyncResult.failed(SyncType.RETRY_FAILED, startTime, e)
+        } finally {
+            syncFinish()
+        }
+    }
+
+    /**
      * Full sync: discovery + extraction in sequence.
      */
     suspend fun performFullSync(): SyncResult {
@@ -384,17 +426,41 @@ class SyncService(
      * - Changed files (size/mtime differ): reset to DISCOVERED
      * - Deleted files (in existing but not in new): removed + PDFMetadata deleted
      * - Unchanged EXTRACTED files: kept as EXTRACTED (skipped)
+     *
+     * SMB/NFS safety: if a scan path had N entries before and the new discovery
+     * returned 0 for that path, we skip all deletions for that path and preserve
+     * the existing entries in the manifest.  A 0-result scan most likely means the
+     * volume was temporarily unreachable, not that all files were deleted.
      */
-    private suspend fun diffManifests(
+    internal suspend fun diffManifests(
         existing: DiscoveryManifest,
         new: DiscoveryManifest
     ): DiscoveryManifest {
         val existingByPath = existing.files.associateBy { it.path }
         val newByPath = new.files.associateBy { it.path }
 
-        // Handle deleted files: in existing but not in new
+        // Detect unavailable scan paths: had files before, now 0 results.
+        val skippedScanPaths = mutableSetOf<String>()
+        for (scanPath in existing.scanPaths) {
+            val existingCount = existingByPath.keys.count { it.startsWith(scanPath) }
+            val newCount = newByPath.keys.count { it.startsWith(scanPath) }
+            if (existingCount > 0 && newCount == 0) {
+                logger.warn(
+                    "diffManifests: scan path '$scanPath' returned 0 results but had " +
+                    "$existingCount existing entries — skipping deletions (volume may be temporarily unavailable)"
+                )
+                skippedScanPaths.add(scanPath)
+            }
+        }
+
+        // Handle deleted files: in existing but not in new.
+        // Skip deletions for files under unavailable scan paths.
         val deletedPaths = existingByPath.keys - newByPath.keys
-        for (path in deletedPaths) {
+        val safeDeletions = deletedPaths.filter { path ->
+            skippedScanPaths.none { scanPath -> path.startsWith(scanPath) }
+        }.toSet()
+
+        for (path in safeDeletions) {
             try {
                 val id = path.hashCode().toString()
                 repository.deletePDF(id)
@@ -404,11 +470,15 @@ class SyncService(
                 logger.warn("Failed to remove metadata for deleted file: $path", e)
             }
         }
-        if (deletedPaths.isNotEmpty()) {
-            logger.info("Removed ${deletedPaths.size} deleted files from manifest")
+        if (safeDeletions.isNotEmpty()) {
+            logger.info("Removed ${safeDeletions.size} deleted files from manifest")
+        }
+        val skippedDeletions = deletedPaths.size - safeDeletions.size
+        if (skippedDeletions > 0) {
+            logger.info("Preserved $skippedDeletions entries from temporarily-unavailable scan paths: $skippedScanPaths")
         }
 
-        // Build merged file list
+        // Build merged file list from new discovery.
         val mergedFiles = newByPath.map { (path, newFile) ->
             val existingFile = existingByPath[path]
             when {
@@ -421,6 +491,15 @@ class SyncService(
                 // Unchanged file — keep existing status
                 else -> newFile.copy(status = existingFile.status)
             }
+        }.toMutableList()
+
+        // Re-add existing entries from unavailable scan paths so they stay in the manifest.
+        if (skippedScanPaths.isNotEmpty()) {
+            val preserved = existingByPath.values.filter { file ->
+                skippedScanPaths.any { scanPath -> file.path.startsWith(scanPath) }
+            }
+            mergedFiles.addAll(preserved)
+            logger.info("Re-added ${preserved.size} entries from unavailable scan paths to merged manifest")
         }
 
         val newCount = mergedFiles.count { existingByPath[it.path] == null }
@@ -428,8 +507,8 @@ class SyncService(
             val existing2 = existingByPath[file.path]
             existing2 != null && file.status == FileStatus.DISCOVERED
         }
-        if (newCount > 0 || changedCount > 0) {
-            logger.info("Incremental diff: $newCount new, $changedCount changed, ${deletedPaths.size} deleted")
+        if (newCount > 0 || changedCount > 0 || safeDeletions.isNotEmpty()) {
+            logger.info("Incremental diff: $newCount new, $changedCount changed, ${safeDeletions.size} deleted")
         }
 
         return DiscoveryManifest(
@@ -566,7 +645,7 @@ data class SyncResult(
 
 @Serializable
 enum class SyncType {
-    FULL, INCREMENTAL
+    FULL, INCREMENTAL, RETRY_FAILED
 }
 
 @Serializable

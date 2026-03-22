@@ -13,10 +13,10 @@
 | 2 | Two-Phase Sync (Discovery + Extraction) | DONE |
 | 3 | Extraction Progress + Full-Text Search + File Watching | DONE |
 | 4 | Frontend UI (v1 + improvements 4A/4B/4C) | DONE |
-| 2B-1 | diffManifests() SMB protection | NOT STARTED |
-| 2B-2 | Retry-failed sync type | NOT STARTED |
-| 2B-3 | Startup incremental scan | NOT STARTED |
-| 2B-4 | GET /api/manifest endpoint | NOT STARTED |
+| 2B-1 | diffManifests() SMB protection | DONE |
+| 2B-2 | Retry-failed sync type | DONE |
+| 2B-3 | Startup incremental scan | DONE |
+| 2B-4 | GET /api/manifest endpoint | DONE |
 | 2B-5 | Sort/order on GET /api/pdfs | DONE |
 
 ---
@@ -95,16 +95,15 @@ See [`step-3-progress-search-filewatcher.md`](step-3-progress-search-filewatcher
 ### Unplanned Feature: Scheduled Sync (DONE)
 `ScanConfiguration.syncIntervalMinutes` (default 0 = disabled) triggers `performIncrementalSync()` every N minutes via a background loop in `Main.kt`. This is a practical alternative to 2B-3 for network volumes where `WatchService` doesn't work.
 
-### Backend Improvement Phase (step 2B)
-See [`step-2b-robustness.md`](step-2b-robustness.md). Eligible to start now:
+### Backend Improvement Phase (step 2B) — DONE
 
-- **2B-1** (HIGH): `diffManifests()` SMB protection — skip deletions when a scan path returns 0 results but had N existing entries
-- **2B-2** (MEDIUM): `POST /api/sync {"type": "retry-failed"}` — reset FAILED entries and re-extract
-- **2B-3** (MEDIUM): Startup incremental scan after `resumeExtraction()` (depends on 2B-1; scheduled sync via `syncIntervalMinutes` is a workaround)
-- **2B-4** (MEDIUM): `GET /api/manifest` endpoint — discovered/extracted/failed counts + failed file paths
-- **2B-5** (LOW): DONE — sort/order params on `GET /api/pdfs`
+All 2B features are implemented:
 
-> **Note**: 2B-1 is the only item with a real correctness risk (data loss on NAS hiccup). Implement first.
+- **2B-1**: `diffManifests()` SMB guard — if a scan path had N entries before and returns 0 in a new discovery, all deletions for that path are skipped and existing entries are re-added to the merged manifest. Tests in `DiffManifestsTest.kt`.
+- **2B-2**: `POST /api/sync {"type": "retry-failed"}` — `performRetryFailed()` resets FAILED → DISCOVERED and re-runs extraction. `SyncType.RETRY_FAILED` added. Tests in `SyncServiceRetryTest.kt`.
+- **2B-3**: Startup incremental scan — after `resumeExtraction()` succeeds, `performIncrementalSync()` runs automatically to pick up files added since the last manifest. Safe because 2B-1 is in place.
+- **2B-4**: `GET /api/manifest` — returns `ManifestStatus` with `lastDiscovery`, `totalFiles`, `extracted`, `pending`, `failed`, `failedFiles` list. Returns 404 if no manifest exists.
+- **2B-5**: Sort/order on `GET /api/pdfs` — already done as part of step 4.
 
 ---
 

@@ -108,6 +108,8 @@ fun Application.configureApplication() {
             // This preserves progress across restarts and avoids losing entries for
             // scan paths that may be temporarily unavailable (e.g. network volumes).
             // If no manifest exists yet, fall back to a full sync to build one.
+            // After resuming, run an incremental scan to pick up files added since
+            // the last manifest was saved (2B-3).
             launch {
                 logger.info("Starting background metadata sync...")
                 val resumeResult = syncService.resumeExtraction()
@@ -117,6 +119,11 @@ fun Application.configureApplication() {
                     logger.info("Initial sync complete: ${fullResult.summarize()}")
                 } else {
                     logger.info("Background extraction complete: ${resumeResult.summarize()}")
+                    // Pick up any files added to disk since the manifest was last saved.
+                    // diffManifests() is now SMB-safe (2B-1), so this is safe to run on startup.
+                    logger.info("Running incremental scan to pick up new files since last manifest...")
+                    val incrResult = syncService.performIncrementalSync()
+                    logger.info("Startup incremental scan complete: ${incrResult.summarize()}")
                 }
 
                 // Start file watching for local paths (does not work on network volumes)
@@ -186,6 +193,7 @@ fun Application.configureRouting() {
                 val syncResult = when (request.type) {
                     "full" -> syncService.performFullSync()
                     "incremental" -> syncService.performIncrementalSync()
+                    "retry-failed" -> syncService.performRetryFailed()
                     else -> throw IllegalArgumentException("Invalid sync type: ${request.type}")
                 }
                 call.respond(HttpStatusCode.OK, ApiResponse.success(syncResult))
@@ -370,6 +378,34 @@ fun Application.configureRouting() {
             }
         }
 
+        get("/api/manifest") {
+            try {
+                if (!::syncService.isInitialized) {
+                    call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
+                    return@get
+                }
+                val manifest = syncService.loadManifest()
+                if (manifest == null) {
+                    call.respond(HttpStatusCode.NotFound, ApiResponse.error("No manifest found — run a sync first"))
+                    return@get
+                }
+                val status = ManifestStatus(
+                    lastDiscovery = manifest.lastDiscovery,
+                    totalFiles = manifest.files.size,
+                    extracted = manifest.files.count { it.status == com.example.scanning.FileStatus.EXTRACTED },
+                    pending = manifest.files.count { it.status == com.example.scanning.FileStatus.DISCOVERED },
+                    failed = manifest.files.count { it.status == com.example.scanning.FileStatus.FAILED },
+                    failedFiles = manifest.files
+                        .filter { it.status == com.example.scanning.FileStatus.FAILED }
+                        .map { it.path }
+                )
+                call.respond(HttpStatusCode.OK, ApiResponse.success(status))
+            } catch (e: Exception) {
+                logger.error("Failed to load manifest", e)
+                call.respond(HttpStatusCode.InternalServerError, ApiResponse.error(e.message ?: "Failed to load manifest"))
+            }
+        }
+
         get("/api/search") {
             try {
                 if (!::repository.isInitialized) {
@@ -430,4 +466,14 @@ data class SystemStatus(
     val syncInProgress: Boolean,
     val extractionProgress: ExtractionProgress? = null,
     val fileWatchingEnabled: Boolean = false
+)
+
+@Serializable
+data class ManifestStatus(
+    val lastDiscovery: kotlin.time.Instant,
+    val totalFiles: Int,
+    val extracted: Int,
+    val pending: Int,
+    val failed: Int,
+    val failedFiles: List<String>
 )

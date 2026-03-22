@@ -1,7 +1,6 @@
 # Backend Improvement Phase: Resilience, Retry, and API Completeness
 
-> **Status**: PARTIALLY DONE — 2B-5 done; 2B-1 through 2B-4 NOT STARTED
-> **Note**: These are correctness and UX improvements discovered during the step-2 review. The SMB data-loss bug (2B-1) is the only item with a correctness impact — implement first.
+> **Status**: DONE — all 2B features implemented (2B-1 through 2B-5)
 
 ## Context
 
