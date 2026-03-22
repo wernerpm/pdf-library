@@ -1,0 +1,25 @@
+# Build outputs
+build/
+.gradle/
+
+# IDE files
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Local config (mounted as a bind mount at runtime)
+config.json
+.env
+
+# Git
+.git/
+.gitignore
+
+# Docs
+docs/
+*.md
+
+# OS
+.DS_Store
+Thumbs.db

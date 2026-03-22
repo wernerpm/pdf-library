@@ -45,6 +45,10 @@ dependencies {
     // DateTime handling
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.7.1")
 
+    // Security headers + CORS
+    implementation("io.ktor:ktor-server-default-headers:3.4.0")
+    implementation("io.ktor:ktor-server-cors:3.4.0")
+
     // WebAuthn server-side
     implementation("com.yubico:webauthn-server-core:2.5.4")
 

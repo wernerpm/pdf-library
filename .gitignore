@@ -82,6 +82,9 @@ $RECYCLE.BIN/
 # Configuration (use config.json.base as template)
 config.json
 
+# Environment variables (use .env.example as template)
+.env
+
 # SQLite databases (keep structure, ignore data)
 *.db
 *.sqlite

@@ -1,0 +1,20 @@
+{$APP_URL} {
+    reverse_proxy app:8080
+
+    # Security headers (add to what Ktor already sets)
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+        X-Frame-Options "DENY"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+        -X-Powered-By
+    }
+
+    encode gzip
+
+    log {
+        output stderr
+    }
+}

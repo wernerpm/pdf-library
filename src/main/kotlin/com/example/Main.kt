@@ -22,6 +22,8 @@ import io.ktor.server.engine.*
 import io.ktor.server.http.content.*
 import io.ktor.server.netty.*
 import io.ktor.server.plugins.contentnegotiation.*
+import io.ktor.server.plugins.cors.routing.*
+import io.ktor.server.plugins.defaultheaders.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
@@ -47,6 +49,7 @@ lateinit var syncService: SyncService
 lateinit var textContentStore: TextContentStore
 lateinit var authService: AuthService
 lateinit var jwtSecret: String
+var appUrl: String? = null
 
 fun main() {
     logger.info("Starting PDF Library Server...")
@@ -54,12 +57,16 @@ fun main() {
     jwtSecret = System.getenv("JWT_SECRET")
         ?: error("JWT_SECRET environment variable is required")
 
+    appUrl = System.getenv("APP_URL")
+
     // Load config synchronously so it is available for the JWT plugin setup
     appConfig = runBlocking { ConfigurationManager().loadConfiguration() }
     logger.info("Configuration loaded: ${appConfig.pdfScanPaths.size} scan path(s), rpId=${appConfig.rpId}")
 
     embeddedServer(Netty, port = 8080, host = "0.0.0.0") {
         configureContentNegotiation()
+        configureSecurityHeaders()
+        appUrl?.let { configureCors(it) }
         configureAuth()
         configureApplication()
         configureRouting()
@@ -68,6 +75,30 @@ fun main() {
 
 fun Application.configureContentNegotiation() {
     install(ContentNegotiation) { json() }
+}
+
+fun Application.configureSecurityHeaders() {
+    install(DefaultHeaders) {
+        header("X-Frame-Options", "DENY")
+        header("X-Content-Type-Options", "nosniff")
+        header("Referrer-Policy", "strict-origin-when-cross-origin")
+        header("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+        header(
+            "Content-Security-Policy",
+            "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'"
+        )
+    }
+}
+
+fun Application.configureCors(appUrl: String) {
+    val host = appUrl.removePrefix("https://").removePrefix("http://").trimEnd('/')
+    install(CORS) {
+        allowHost(host, schemes = listOf("https", "http"))
+        allowCredentials = true
+        allowHeader(HttpHeaders.Authorization)
+        allowHeader(HttpHeaders.ContentType)
+        allowMethod(HttpMethod.Post)
+    }
 }
 
 fun Application.configureAuth() {
@@ -182,7 +213,7 @@ fun Application.configureApplication() {
 fun Application.configureRouting() {
     routing {
 
-        // ---- Public: login page ----
+        // ---- Public: login page + assets ----
 
         get("/login") {
             val bytes = Thread.currentThread().contextClassLoader
@@ -190,6 +221,14 @@ fun Application.configureRouting() {
                 ?.readBytes()
                 ?: return@get call.respond(HttpStatusCode.NotFound)
             call.respondBytes(bytes, ContentType.Text.Html)
+        }
+
+        get("/login.js") {
+            val bytes = Thread.currentThread().contextClassLoader
+                .getResourceAsStream("login.js")
+                ?.readBytes()
+                ?: return@get call.respond(HttpStatusCode.NotFound)
+            call.respondBytes(bytes, ContentType.Text.JavaScript)
         }
 
         // ---- Public: auth endpoints ----
