@@ -1,6 +1,6 @@
 # Current Implementation Status
 
-> Last updated: 2026-03-19
+> Last updated: 2026-03-22
 
 ## Overview
 
@@ -12,8 +12,12 @@
 | 1d | In-Memory Repository + JSON Persistence | DONE |
 | 2 | Two-Phase Sync (Discovery + Extraction) | DONE |
 | 3 | Extraction Progress + Full-Text Search + File Watching | DONE |
-| 4 | Frontend UI | DONE |
-| 2B | Backend Improvements (Resilience, Retry, API completeness) | NOT STARTED — after frontend |
+| 4 | Frontend UI (v1 + improvements 4A/4B/4C) | DONE |
+| 2B-1 | diffManifests() SMB protection | NOT STARTED |
+| 2B-2 | Retry-failed sync type | NOT STARTED |
+| 2B-3 | Startup incremental scan | NOT STARTED |
+| 2B-4 | GET /api/manifest endpoint | NOT STARTED |
+| 2B-5 | Sort/order on GET /api/pdfs | DONE |
 
 ---
 
@@ -76,31 +80,31 @@
 
 ## What's Next
 
-### Backend Improvement Phase (step 2B)
-See [`step-2b-robustness.md`](step-2b-robustness.md). All features deferred until after the frontend — now eligible to start:
 
-- **2B-1** (HIGH): `diffManifests()` SMB protection — skip deletions when a scan path returns 0 results but had N existing entries
-- **2B-2** (MEDIUM): `POST /api/sync {"type": "retry-failed"}` — reset FAILED entries and re-extract
-- **2B-3** (MEDIUM): Startup incremental scan after `resumeExtraction()` (depends on 2B-1)
-- **2B-4** (MEDIUM): `GET /api/manifest` endpoint
-- **2B-5** (LOW): Already done as part of step 4 (`sort`/`order` params on `GET /api/pdfs`)
-
-### Step 4 — Frontend UI (DONE)
+### Step 4 — Frontend UI (DONE, including 4A/4B/4C)
 See [`step-4-frontend.md`](step-4-frontend.md).
+
+All three planned improvements are built:
+- **4A**: Numbered page buttons with ellipsis (`getPageSlots()` in `app.js`)
+- **4B**: Pagination at top and bottom of grid
+- **4C**: "Open PDF" button in modal — serves via `GET /api/pdfs/{id}/file` HTTP proxy (better than `file://` URL)
 
 ### Step 3 — Extraction Progress + Full-Text Search + File Watching (DONE)
 See [`step-3-progress-search-filewatcher.md`](step-3-progress-search-filewatcher.md).
 
-### Backend Improvement Phase (after frontend)
-See [`step-2b-robustness.md`](step-2b-robustness.md). Features deferred until after the frontend:
+### Unplanned Feature: Scheduled Sync (DONE)
+`ScanConfiguration.syncIntervalMinutes` (default 0 = disabled) triggers `performIncrementalSync()` every N minutes via a background loop in `Main.kt`. This is a practical alternative to 2B-3 for network volumes where `WatchService` doesn't work.
+
+### Backend Improvement Phase (step 2B)
+See [`step-2b-robustness.md`](step-2b-robustness.md). Eligible to start now:
 
 - **2B-1** (HIGH): `diffManifests()` SMB protection — skip deletions when a scan path returns 0 results but had N existing entries
 - **2B-2** (MEDIUM): `POST /api/sync {"type": "retry-failed"}` — reset FAILED entries and re-extract
-- **2B-3** (MEDIUM): Startup incremental scan — run `performIncrementalSync()` after `resumeExtraction()` to pick up files added since last manifest (depends on 2B-1)
-- **2B-4** (MEDIUM): `GET /api/manifest` endpoint — show discovered/extracted/failed counts + failed file paths
-- **2B-5** (LOW): `GET /api/pdfs?sort=title|author|indexedAt|fileSize&order=asc|desc`
+- **2B-3** (MEDIUM): Startup incremental scan after `resumeExtraction()` (depends on 2B-1; scheduled sync via `syncIntervalMinutes` is a workaround)
+- **2B-4** (MEDIUM): `GET /api/manifest` endpoint — discovered/extracted/failed counts + failed file paths
+- **2B-5** (LOW): DONE — sort/order params on `GET /api/pdfs`
 
-> **Note**: 2B-1 is the only item with a real correctness risk (data loss on NAS hiccup). It can be promoted to before step 3 if desired.
+> **Note**: 2B-1 is the only item with a real correctness risk (data loss on NAS hiccup). Implement first.
 
 ---
 

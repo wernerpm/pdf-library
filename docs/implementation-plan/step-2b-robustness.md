@@ -1,8 +1,7 @@
 # Backend Improvement Phase: Resilience, Retry, and API Completeness
 
-> **Status**: NOT STARTED
-> **When**: After frontend implementation
-> **Note**: These are correctness and UX improvements discovered during the step-2 review. The SMB data-loss bug (2B-1) is the only item with a correctness impact — it can be moved earlier if needed.
+> **Status**: PARTIALLY DONE — 2B-5 done; 2B-1 through 2B-4 NOT STARTED
+> **Note**: These are correctness and UX improvements discovered during the step-2 review. The SMB data-loss bug (2B-1) is the only item with a correctness impact — implement first.
 
 ## Context
 

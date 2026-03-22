@@ -10,14 +10,19 @@
 | Metadata extraction | DONE | PDFBox 3.0, XMP, encrypted PDF handling, SHA-256 hashing |
 | Repository + persistence | DONE | In-memory cache with JSON file backing, thread-safe, persist-first ordering |
 | Sync service | DONE | Incremental sync, progress tracking, contention prevention |
-| Two-phase sync | NOT STARTED | Split sync into fast discovery + parallel extraction (see step-2-two-phase-sync.md) |
-| REST API | DONE | Full CRUD, search, sync, pagination endpoints via Ktor |
+| Two-phase sync | DONE | Fast discovery + chunked extraction, resumable, manifest-backed |
+| REST API | DONE | Full CRUD, search, sync, pagination, sort/order, file proxy endpoints via Ktor |
 | Security hardening | DONE | 13 issues fixed (see AGENTS.md for details) |
 | Thumbnail generation | DONE | `ThumbnailGenerator` renders page 0 at 72 DPI → 300px PNG, `thumbnailPath` in `PDFMetadata`, `GET /api/thumbnails/{id}` endpoint |
-| Frontend UI | NOT STARTED | No HTML/CSS/JS assets |
+| Frontend UI | DONE | Vanilla JS SPA with grid, search, sort, pagination, modal, sync panel |
+| Full-text PDF search | DONE | `TextContentExtractor` + `TextContentStore`, `GET /api/pdfs/{id}/text`, full-text scoring in `SearchEngine` |
+| File watching | DONE | `FileWatcher` (WatchService) for local paths; scheduled sync (`syncIntervalMinutes`) for network volumes |
+| SMB resilience (2B-1) | NOT STARTED | `diffManifests()` does not yet guard against scan paths returning 0 results |
+| Retry-failed (2B-2) | NOT STARTED | No `retry-failed` sync type yet |
+| Startup incremental scan (2B-3) | NOT STARTED | Resume does not run incremental scan after restart |
+| Manifest API (2B-4) | NOT STARTED | No `GET /api/manifest` endpoint |
 | ACL / Permissions | NOT STARTED | No role-based access control |
 | S3 / Cloud storage | NOT STARTED | No `S3Storage` implementation |
-| Full-text PDF search | NOT STARTED | No text extraction or content search index |
 
 ## Overview
 A PDF library application that provides a web-based interface for managing thousands of PDFs with thumbnail previews, metadata indexing, and flexible storage backends.
@@ -101,9 +106,9 @@ A PDF library application that provides a web-based interface for managing thous
 - **Error Handling**: Comprehensive error responses
 - **Content Negotiation**: Support for different response formats
 
-### 4. Frontend UI (Week 2-3) - NOT STARTED
+### 4. Frontend UI (Week 2-3) - DONE
 
-> **Status**: No HTML, CSS, or JavaScript files exist. The application is currently API-only.
+> **Status**: Vanilla JS SPA at `src/main/resources/static/`. Grid view, search, sort/order, paginator (top+bottom, numbered), detail modal, sync panel, stats bar. PDF served via HTTP proxy (`GET /api/pdfs/{id}/file`).
 
 **Purpose**: Responsive web interface for PDF browsing
 
@@ -160,14 +165,16 @@ A PDF library application that provides a web-based interface for managing thous
 2. **Day 3-4**: Sync service with incremental updates - DONE
 3. **Day 5**: API testing and optimization - DONE
 
-### Week 3: Frontend and Polish - NOT STARTED
-1. **Day 1-3**: Frontend UI with virtual scrolling - NOT STARTED
-2. **Day 4-5**: Integration testing and performance optimization - NOT STARTED
+### Week 3: Frontend and Polish - DONE
+1. **Day 1-3**: Frontend UI - DONE (vanilla JS SPA)
+2. **Day 4-5**: Polish — DONE (pagination improvements, PDF proxy, scheduled sync)
 
-### Remaining Work
-1. **Two-phase sync** - Split monolithic sync into fast discovery (filesystem listing) + parallel extraction (PDF parsing, thumbnails, hashing). Resumable, background extraction. See `docs/implementation-plan/step-2-two-phase-sync.md`
-2. **Frontend UI** - Vanilla JS + Web Components with virtual scrolling, search, and PDF viewer
-3. **Integration/performance tests** - Large dataset handling, API response times
+### Remaining Work (step 2B)
+1. **2B-1 SMB resilience** — `diffManifests()` guard against empty scan path returns (HIGH — data loss risk)
+2. **2B-2 Retry-failed** — `POST /api/sync {"type": "retry-failed"}` to re-extract FAILED entries
+3. **2B-3 Startup incremental scan** — run incremental sync after `resumeExtraction()` on restart (depends on 2B-1)
+4. **2B-4 Manifest API** — `GET /api/manifest` showing extracted/pending/failed counts
+5. **Integration/performance tests** — Large dataset handling, API response times
 
 ## Project Structure
 

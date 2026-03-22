@@ -1,6 +1,6 @@
 # Step 4 — Frontend UI
 
-> Status: DONE (v1) — improvements planned below
+> Status: DONE (including improvements 4A, 4B, 4C)
 
 ## Goals
 
@@ -61,22 +61,20 @@ src/main/resources/static/
 - Top authors list
 - Loaded once on startup from `GET /api/stats`
 
-## Planned Improvements
+## Improvements (all DONE)
 
-### 4A — Numbered page buttons
-Replace the plain "Page N of M" label with a compact page-number bar:
+### 4A — Numbered page buttons (DONE)
+`getPageSlots()` in `app.js` renders a compact page-number bar:
 ```
 ← 1 2 3 4 5 … 40 →
 ```
-- Show up to 7 slots: always first, always last, current ±2, ellipsis where there are gaps
-- Current page highlighted
-- Applies to both top and bottom pagination bars
+Shows up to 7 slots: always first/last, current ±2, ellipsis where there are gaps.
 
-### 4B — Pagination top and bottom
-Duplicate the pagination controls so they appear above the grid (below the toolbar) **and** below the grid. Both are kept in sync from the same state — a single `renderPagination()` call updates both.
+### 4B — Pagination top and bottom (DONE)
+`renderPagination()` populates both `paginationTop` and `paginationBot` from the same state.
 
-### 4C — Open PDF from detail modal
-The modal "Open PDF" button constructs a `file://` URL from `pdf.path` and opens it with `window.open(url, '_blank')`. This lets the OS/browser handle the PDF directly. The button is shown below the metadata table.
+### 4C — Open PDF from detail modal (DONE)
+"Open PDF" link in modal uses `GET /api/pdfs/{id}/file` (HTTP proxy endpoint, `Main.kt:269-295`) which serves the file inline with `Content-Disposition: inline`. This is better than a `file://` URL (works across all browsers and remote access).
 
 ---
 
