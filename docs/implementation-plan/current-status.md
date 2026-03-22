@@ -80,30 +80,21 @@
 
 ## What's Next
 
+### Step 5 — API Integration Tests
 
-### Step 4 — Frontend UI (DONE, including 4A/4B/4C)
-See [`step-4-frontend.md`](step-4-frontend.md).
+Replace the `MainTest.kt` placeholder with real Ktor `testApplication` tests covering all HTTP endpoints:
 
-All three planned improvements are built:
-- **4A**: Numbered page buttons with ellipsis (`getPageSlots()` in `app.js`)
-- **4B**: Pagination at top and bottom of grid
-- **4C**: "Open PDF" button in modal — serves via `GET /api/pdfs/{id}/file` HTTP proxy (better than `file://` URL)
+- Route existence, status codes, JSON shape (ApiResponse wrapper)
+- Pagination math on `GET /api/pdfs`
+- Search + sort params on `GET /api/pdfs`
+- 404 for missing PDF / missing thumbnail / missing text
+- `POST /api/sync` valid and invalid types
+- `GET /api/manifest` (404 with no manifest, 200 with manifest)
+- `GET /api/stats` structure
+- `GET /status` structure
+- `GET /` redirect
 
-### Step 3 — Extraction Progress + Full-Text Search + File Watching (DONE)
-See [`step-3-progress-search-filewatcher.md`](step-3-progress-search-filewatcher.md).
-
-### Unplanned Feature: Scheduled Sync (DONE)
-`ScanConfiguration.syncIntervalMinutes` (default 0 = disabled) triggers `performIncrementalSync()` every N minutes via a background loop in `Main.kt`. This is a practical alternative to 2B-3 for network volumes where `WatchService` doesn't work.
-
-### Backend Improvement Phase (step 2B) — DONE
-
-All 2B features are implemented:
-
-- **2B-1**: `diffManifests()` SMB guard — if a scan path had N entries before and returns 0 in a new discovery, all deletions for that path are skipped and existing entries are re-added to the merged manifest. Tests in `DiffManifestsTest.kt`.
-- **2B-2**: `POST /api/sync {"type": "retry-failed"}` — `performRetryFailed()` resets FAILED → DISCOVERED and re-runs extraction. `SyncType.RETRY_FAILED` added. Tests in `SyncServiceRetryTest.kt`.
-- **2B-3**: Startup incremental scan — after `resumeExtraction()` succeeds, `performIncrementalSync()` runs automatically to pick up files added since the last manifest. Safe because 2B-1 is in place.
-- **2B-4**: `GET /api/manifest` — returns `ManifestStatus` with `lastDiscovery`, `totalFiles`, `extracted`, `pending`, `failed`, `failedFiles` list. Returns 404 if no manifest exists.
-- **2B-5**: Sort/order on `GET /api/pdfs` — already done as part of step 4.
+Test infrastructure: Ktor `testApplication`, mockk for `RepositoryManager` + `SyncService`, real `InMemoryMetadataRepository` for accurate stats/search behavior.
 
 ---
 
