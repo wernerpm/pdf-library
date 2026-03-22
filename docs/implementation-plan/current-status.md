@@ -13,95 +13,101 @@
 | 2 | Two-Phase Sync (Discovery + Extraction) | DONE |
 | 3 | Extraction Progress + Full-Text Search + File Watching | DONE |
 | 4 | Frontend UI (v1 + improvements 4A/4B/4C) | DONE |
-| 2B-1 | diffManifests() SMB protection | DONE |
-| 2B-2 | Retry-failed sync type | DONE |
-| 2B-3 | Startup incremental scan | DONE |
-| 2B-4 | GET /api/manifest endpoint | DONE |
-| 2B-5 | Sort/order on GET /api/pdfs | DONE |
+| 2B | Backend Improvements (SMB, retry, startup scan, manifest API) | DONE |
+| 5 | API Integration Tests | DONE |
+| 6 | Authentication (Passkeys + JWT) | NOT STARTED |
+| 7 | Cloud Deployment (Docker + Caddy + HTTPS + security headers) | NOT STARTED |
 
 ---
 
 ## What's Built
 
 ### Step 1a — Configuration + Storage (DONE)
-- `AppConfiguration` / `ScanConfiguration` loaded from `config.json` (JSON, not YAML)
+- `AppConfiguration` / `ScanConfiguration` loaded from `config.json`
 - `ConfigurationManager`: load, validate, save, `~` path expansion
-- `FileSystemStorage`: atomic writes (temp + rename), path traversal prevention, 500MB read cap, symlink-safe recursive delete, `createDirectory`
-- Full test coverage in `FileSystemStorageTest`, `ConfigurationManagerTest`
+- `FileSystemStorage`: atomic writes (temp + rename), path traversal prevention, 500 MB read cap, symlink-safe recursive delete
+- Tests: `FileSystemStorageTest`, `ConfigurationManagerTest`
 
 ### Step 1b — PDF Scanner (DONE)
-- `PDFScanner`: recursive walk, extension filtering, size limits, `maxFiles` cap (100k), symlink loop detection via `visitedDirectories` (real path tracking)
-- `PDFValidator`: `%PDF` header check (reads file bytes — disabled in config for network volumes via `validatePdfHeaders: false`)
+- `PDFScanner`: recursive walk, extension filtering, size limits, 100k file cap, symlink loop detection
+- `PDFValidator`: `%PDF` header check (disableable via `validatePdfHeaders: false` for NAS)
 - `DuplicateDetector`: canonical path-based dedup across multiple scan paths
-- `ScanProgressListener`: suspend interface (`onDirectoryStarted`, `onFileDiscovered`, `onError`, `onScanCompleted`)
-- `ConsoleScanProgressListener`: log-based progress output
-- `discoverFiles()`: phase-1 only method — no PDF bytes read, incremental partial manifest saves during scan
+- `discoverFiles()`: phase-1 only — no PDF bytes read, incremental partial manifest saves
 - Tests: `PDFScannerTest`, `PDFValidatorTest`, `DuplicateDetectorTest`, `DiscoverFilesTest`
 
 ### Step 1c — Metadata Extraction (DONE)
-- `MetadataExtractor`: PDFBox 3.0 (`Loader.loadPDF()`), 60s timeout per PDF, returns null on failure
-- `DocumentInfoExtractor`: standard PDF info (title, author, subject, creator, producer, dates)
-- `CustomPropertiesExtractor`: XMP + custom properties, XMP capped at 10MB
-- `ContentHashGenerator`: SHA-256 only (no weak fallbacks)
-- `ThumbnailGenerator`: page 0 → PNG at 72 DPI, scaled to 300px width
+- `MetadataExtractor`: PDFBox 3.0, 60s timeout per PDF
+- `DocumentInfoExtractor`: title, author, subject, creator, producer, dates
+- `CustomPropertiesExtractor`: XMP + custom properties
+- `ContentHashGenerator`: SHA-256
+- `ThumbnailGenerator`: page 0 → PNG at 72 DPI → 300px width
 - `SecurePDFHandler`: graceful handling of encrypted/signed PDFs
-- `BatchMetadataExtractor`: sequential chunks via `coroutineScope + async`, concurrency=2
-  - **Bug fixed**: original `.flatten().awaitAll()` launched all files concurrently; fixed to chunked processing
 - Tests: `MetadataExtractorTest`, `BatchMetadataExtractorTest`, `ContentHashGeneratorTest`, `ThumbnailGeneratorTest`
 
 ### Step 1d — Repository + Persistence (DONE)
-- `MetadataRepository` interface: `getAllPDFs`, `getPDF`, `savePDF`, `deletePDF`, `search`, `searchByAuthor`, `searchByTitle`, `searchByProperty`, `count`, `loadFromStorage`, `persistToStorage`, `clear`
-- `JsonRepository`: one `<id>.json` per PDF at `$metadataStoragePath/<id>.json`
-- `InMemoryMetadataRepository`: `ConcurrentHashMap` cache + path/author/title secondary indices, all writes mutex-protected, persist-first ordering
-- `JsonPersistenceManager`: serializes/deserializes `PDFMetadata` to individual JSON files
+- `JsonRepository`: one `<id>.json` per PDF
+- `InMemoryMetadataRepository`: `ConcurrentHashMap` cache + secondary indices, mutex-protected
 - `ConsistencyManager`: detects and repairs orphaned in-memory vs on-disk entries
-- `RepositoryManager`: initialization, shutdown, backup, consistency check
-- `SearchEngine`: relevance-scored full-text search (title +3.0, author/filename +2.0, subject/keywords +1.0, custom props +0.5), AND logic
-- Tests: `RepositoryIntegrationTest`
+- `SearchEngine`: relevance-scored full-text search (title +3.0, author/filename +2.0, subject/keywords +1.0)
+- Tests: `RepositoryIntegrationTest`, `SearchEngineTest`
 
 ### Step 2 — Two-Phase Sync (DONE)
-- `FileStatus` enum: `DISCOVERED`, `EXTRACTED`, `FAILED`
-- `PDFFileInfo` extended: added `status: FileStatus`, `metadataPath: String?`
-- `DiscoveryManifest` + `DiscoveryManifestManager`: load/save (atomic), `updateFileStatus(path, status, metadataPath?)`
-- `SyncService`:
-  - `performDiscovery()`: phase 1, saves manifest with incremental partial saves
-  - `performExtraction(manifest)`: phase 2, inline concurrency=2 chunks, persists each chunk immediately
-  - `resumeExtraction()`: loads manifest, backfills old `metadataPath`-less entries, processes `DISCOVERED` only
-  - `performFullSync()`: discovery + extraction, guarded by `syncInProgress`
-  - `performIncrementalSync()`: discovery + `diffManifests()` diff + extraction of DISCOVERED only
-  - `diffManifests()`: new → DISCOVERED, changed (size/mtime) → DISCOVERED, deleted → remove metadata, unchanged EXTRACTED → skip
-- **Startup flow**: server ready immediately → `resumeExtraction()` in background → fallback to `performFullSync()` if no manifest
-- API: `POST /api/sync {"type": "full"|"incremental"}`, `GET /status` (reports `syncInProgress`)
-- Tests: `DiscoveryManifestTest`, `DiscoverFilesTest`, `ScanIntegrationTest`
+- `performDiscovery()` / `performExtraction()` / `resumeExtraction()` / `performFullSync()` / `performIncrementalSync()`
+- `diffManifests()`: SMB-safe — skips deletions when a scan path returns 0 results
+- Startup flow: server ready → `resumeExtraction()` → startup incremental scan → file watching/scheduled sync
+- Tests: `DiscoveryManifestTest`, `DiscoverFilesTest`, `DiffManifestsTest`
 
-**Known deviation from plan**: `performExtraction()` bypasses `BatchMetadataExtractor` and does inline chunked coroutines directly. `BatchMetadataExtractor` still exists and is used by legacy `scanAndPersist()` flow.
+### Step 3 — Extraction Progress + Full-Text Search + File Watching (DONE)
+- `ExtractionProgress` / `ExtractionPhase` with `GET /status` polling
+- `TextContentExtractor` + `TextContentStore`: per-PDF full text, `GET /api/pdfs/{id}/text`
+- `FileWatcher`: WatchService-based for local paths; `syncIntervalMinutes` for NAS volumes
+
+### Step 4 — Frontend UI (DONE)
+- Vanilla JS SPA: grid, search (debounced), sort/order, numbered pagination (top + bottom), detail modal
+- Text content preview in modal, PDF served via `GET /api/pdfs/{id}/file` HTTP proxy
+- Sync panel: status badge, progress bar, full/incremental sync buttons
+
+### Step 2B — Backend Improvements (DONE)
+- **2B-1**: `diffManifests()` SMB guard
+- **2B-2**: `POST /api/sync {"type":"retry-failed"}` + `SyncType.RETRY_FAILED`
+- **2B-3**: Startup incremental scan after `resumeExtraction()`
+- **2B-4**: `GET /api/manifest` → `ManifestStatus` with counts + failed file paths
+- **2B-5**: `sort` / `order` params on `GET /api/pdfs`
+- Tests: `SyncServiceRetryTest`
+
+### Step 5 — API Integration Tests (DONE)
+- 21 `testApplication` tests in `MainApiTest`: pagination, search, sort, 404s, sync types,
+  manifest, stats, status, redirect
+- Uses real `InMemoryMetadataRepository` + mockk for `RepositoryManager` / `SyncService`
 
 ---
 
 ## What's Next
 
-### Step 5 — API Integration Tests
+### Step 6 — Authentication (Passkeys + JWT)
+See [`step-6-auth.md`](step-6-auth.md).
 
-Replace the `MainTest.kt` placeholder with real Ktor `testApplication` tests covering all HTTP endpoints:
+- WebAuthn passkey registration and login ceremonies
+- JWT issued on successful authentication (8h expiry), validated as Ktor middleware
+- All `/api/*` and `/static/*` routes protected; auth endpoints and login page public
+- Credentials stored in `credentials.json` alongside other metadata
+- No passwords, no user management complexity
 
-- Route existence, status codes, JSON shape (ApiResponse wrapper)
-- Pagination math on `GET /api/pdfs`
-- Search + sort params on `GET /api/pdfs`
-- 404 for missing PDF / missing thumbnail / missing text
-- `POST /api/sync` valid and invalid types
-- `GET /api/manifest` (404 with no manifest, 200 with manifest)
-- `GET /api/stats` structure
-- `GET /status` structure
-- `GET /` redirect
+### Step 7 — Cloud Deployment
+See [`step-7-deployment.md`](step-7-deployment.md).
 
-Test infrastructure: Ktor `testApplication`, mockk for `RepositoryManager` + `SyncService`, real `InMemoryMetadataRepository` for accurate stats/search behavior.
+- `Dockerfile` (multi-stage Gradle build → JRE runtime image)
+- `docker-compose.yml` with Caddy reverse proxy (automatic HTTPS via Let's Encrypt)
+- `Caddyfile`: HTTPS termination, security headers, rate limiting on auth endpoints
+- Ktor: HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, CORS locked to own domain, CSP
+- Secrets via environment variables (`JWT_SECRET`, `APP_URL`)
+- Firewall: only port 443 externally exposed
 
 ---
 
 ## Current Live State
 
-The server is running against:
 - Scan paths: configured in `config.json` (includes SMB NAS at `/Volumes/Public/Livros/`)
-- ~2686 PDFs discovered, extraction completed (all files processed as of last run)
+- ~2686 PDFs discovered, extraction completed
 - Metadata stored at `$metadataStoragePath` as individual `<id>.json` files
 - Discovery manifest at `$metadataStoragePath/discovery-manifest.json`
