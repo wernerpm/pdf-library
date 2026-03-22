@@ -1,22 +1,21 @@
 # PDF Library
 
-A high-performance web-based PDF management application for organizing and browsing thousands of PDFs with thumbnail previews, metadata indexing, and flexible storage backends.
+A personal web-based PDF library for organizing and browsing thousands of PDFs, with thumbnail previews, full-text search, and passkey authentication.
 
 ## Features
 
-- **Fast PDF Management**: Handle thousands of PDFs with sub-millisecond search performance
-- **Thumbnail Previews**: Automatic thumbnail generation for visual browsing
-- **Advanced Search**: Search by title, author, custom metadata, and more
-- **Flexible Storage**: Pluggable storage backends (filesystem, S3, cloud storage)
-- **Zero Dependencies**: Single JAR deployment with no external database required
-- **Modern UI**: Responsive web interface with virtual scrolling and lazy loading
-- **Custom Metadata**: Extensible metadata system for books, comics, documents, etc.
+- **Fast PDF management**: handles thousands of PDFs with in-memory search
+- **Thumbnail previews**: automatic generation via PDFBox
+- **Full-text search**: searches titles, authors, and extracted PDF text
+- **Passkey authentication**: WebAuthn passkeys + JWT, no passwords
+- **Zero dependencies**: single JAR, no external database or auth service required
+- **NAS-friendly**: SMB resilience, incremental sync, scheduled background scans
 
 ## Quick Start
 
 ### Prerequisites
 
-- Java 17 or higher
+- Java 21 or higher
 - At least 512MB RAM (for thousands of PDFs)
 
 ### Setup
@@ -32,14 +31,13 @@ A high-performance web-based PDF management application for organizing and brows
    cp config.json.base config.json
    ```
 
-3. **Edit configuration** (optional)
+3. **Edit configuration**
 
-   Edit `config.json` to customize your setup:
+   Edit `config.json`:
    ```json
    {
      "pdfScanPaths": [
-       "~/.pdf-library/books",
-       "~/Documents/PDFs"
+       "~/.pdf-library/books"
      ],
      "metadataStoragePath": "~/.pdf-library/metadata",
      "scanning": {
@@ -47,58 +45,140 @@ A high-performance web-based PDF management application for organizing and brows
        "maxDepth": 50,
        "excludePatterns": [".*", "temp*", "*.tmp"],
        "fileExtensions": [".pdf"]
-     }
+     },
+     "rpId": "localhost",
+     "rpName": "PDF Library",
+     "jwtIssuer": "localhost"
    }
    ```
 
-4. **Build and run the application**
+   For a real deployment replace `"localhost"` with your domain (see [Deployment](#deployment)).
+
+4. **Set the required `JWT_SECRET` environment variable**
+   ```bash
+   export JWT_SECRET="$(openssl rand -hex 32)"
+   ```
+
+5. **Build and run**
    ```bash
    ./gradlew run
    ```
 
-   Or build and run the JAR:
+   Or build a JAR first:
    ```bash
    ./gradlew build
-   java -jar build/libs/pdf-library-1.0.0.jar
+   JWT_SECRET="your-secret" java -jar build/libs/pdf-library-1.0.0.jar
    ```
 
-The application will start on `http://localhost:8080`
+The application will start on `http://localhost:8080`.
 
-### Initial Setup
+### First login
 
-After starting the application:
-1. Place your PDFs in the configured scan directories
-2. The application will automatically scan for PDF files
-3. Generate thumbnails and extract metadata
-4. Create a searchable index
+On the first run there are no registered passkeys, so the registration form is
+open to anyone.
+
+1. Open `http://localhost:8080/login`
+2. Expand **Register a new device**, enter a username and display name, and click **Register this device**
+3. Your browser/device will prompt you to create a passkey (Touch ID, Face ID, Windows Hello, hardware key, etc.)
+4. Once registered, click **Sign in with passkey** to log in
+
+After the first credential is saved, the registration form requires an existing
+valid JWT — preventing strangers from adding themselves.
+
+## Deployment
+
+### Requirements
+
+- Java 21+
+- `JWT_SECRET` environment variable — a random secret of at least 32 characters.
+  The server refuses to start if this is missing.
+- HTTPS — passkeys require a secure context. `localhost` is exempt for local testing,
+  but any remote deployment must be served over HTTPS.
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `JWT_SECRET` | Yes | HMAC-256 signing secret for JWTs. Rotate to invalidate all sessions. |
+
+### config.json — auth fields
+
+| Field | Default | Description |
+|---|---|---|
+| `rpId` | `"localhost"` | WebAuthn Relying Party ID — must match the domain users visit, e.g. `"library.example.com"` |
+| `rpName` | `"PDF Library"` | Human-readable app name shown by the browser passkey prompt |
+| `jwtIssuer` | `"localhost"` | JWT issuer claim — set to the same value as `rpId` |
+
+### Reverse proxy (Caddy example)
+
+Passkeys are tied to the `rpId` domain. Put the app behind a reverse proxy that
+terminates TLS:
+
+```
+library.example.com {
+    reverse_proxy localhost:8080
+}
+```
+
+Update `config.json`:
+```json
+{
+  "rpId": "library.example.com",
+  "rpName": "My PDF Library",
+  "jwtIssuer": "library.example.com"
+}
+```
+
+### Registering additional devices
+
+Once you are logged in, open `http://your-domain/login` and use the
+**Register a new device** form. The server requires a valid JWT for registration
+after the first credential exists, so only authenticated users can add new passkeys.
+
+### Revoking access
+
+Delete or edit `credentials.json` in `metadataStoragePath` to remove passkeys.
+Changing `JWT_SECRET` immediately invalidates all existing sessions.
 
 ## Architecture
 
-### Storage Engine
-- **Abstracted storage layer** supporting multiple backends
-- **Access control** with role-based permissions
-- **Primary implementation**: FileSystem storage
-- **Future support**: S3, database, cloud storage
+### Storage
+- Filesystem-backed with atomic writes (temp-file + rename)
+- All metadata in a single JSON file per collection — easy to back up
 
-### PDF Processing
-- **Automatic indexing** of PDF files
-- **Thumbnail generation** using PDFBox
-- **Metadata extraction** including custom properties
-- **Incremental sync** for efficient updates
+### PDF processing
+- Thumbnail generation and text extraction via Apache PDFBox
+- Incremental sync: only processes new/changed files
+- Scheduled background scans for NAS volumes where `inotify` doesn't work
 
 ### Performance
-- **In-memory metadata** for instant searches
-- **Virtual scrolling** for handling large collections
-- **Lazy loading** thumbnails
-- **Responsive design** for mobile and desktop
+- In-memory metadata index for instant search
+- Lazy-loaded thumbnails
+- Responsive grid layout
 
 ## API Endpoints
 
-- `GET /api/pdfs` - List PDFs with pagination and filtering
-- `GET /api/pdfs/{id}` - Get specific PDF details
-- `GET /api/thumbnails/{id}` - Serve thumbnail images
-- `POST /api/sync` - Trigger manual synchronization
-- `GET /api/search?q={query}` - Search PDFs by metadata
+All `/api/*` routes (except `/api/auth/*`) require `Authorization: Bearer <token>`.
+
+| Endpoint | Auth | Description |
+|---|---|---|
+| `GET /login` | Public | Login / registration page |
+| `POST /api/auth/login/start` | Public | Begin passkey authentication |
+| `POST /api/auth/login/finish` | Public | Complete authentication, receive JWT |
+| `POST /api/auth/register/start` | Public¹ | Begin passkey registration |
+| `POST /api/auth/register/finish` | Public¹ | Complete registration |
+| `POST /api/auth/logout` | JWT | Invalidate client-side token |
+| `GET /api/pdfs` | JWT | List PDFs with pagination, sorting, search |
+| `GET /api/pdfs/{id}` | JWT | PDF metadata |
+| `GET /api/pdfs/{id}/file` | JWT | Serve the PDF file |
+| `GET /api/pdfs/{id}/text` | JWT | Extracted plain text |
+| `GET /api/thumbnails/{id}` | JWT | Thumbnail image |
+| `GET /api/stats` | JWT | Library statistics |
+| `POST /api/sync` | JWT | Trigger sync (`full`, `incremental`, `retry-failed`) |
+| `GET /api/manifest` | JWT | Discovery manifest status |
+| `GET /status` | JWT | Server status and extraction progress |
+
+¹ Public only when no credentials exist (bootstrap). Requires JWT thereafter.
 
 ## Custom Metadata
 
@@ -112,10 +192,11 @@ The system supports extensible metadata for different PDF types:
 
 ### Technology Stack
 
-- **Backend**: Kotlin + Ktor
-- **Frontend**: Vanilla JavaScript + Web Components
-- **PDF Processing**: PDFBox
-- **Storage**: Filesystem (with pluggable backends)
+- **Backend**: Kotlin + Ktor 3
+- **Auth**: WebAuthn (Yubico) + JWT (Auth0 java-jwt)
+- **Frontend**: Vanilla JavaScript
+- **PDF processing**: Apache PDFBox
+- **Storage**: Filesystem (atomic writes, no external database)
 
 ### Project Structure
 
@@ -154,11 +235,8 @@ The application uses filesystem-based configuration. Metadata is stored alongsid
 
 ## Future Extensions
 
-- Full-text search within PDFs
-- Collections and folder organization
-- User authentication and authorization
+- Collections and folder organisation
 - PDF annotation support
-- Cloud storage backends (S3, Google Cloud, Azure)
 
 ## License
 
