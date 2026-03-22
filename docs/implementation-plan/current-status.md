@@ -17,6 +17,7 @@
 | 5 | API Integration Tests | DONE |
 | 6 | Authentication (Passkeys + JWT) | NOT STARTED |
 | 7 | Cloud Deployment (Docker + Caddy + HTTPS + security headers) | NOT STARTED |
+| 8 | CI Pipeline (GitHub Actions: test + build image + push to GHCR) | NOT STARTED |
 
 ---
 
@@ -102,6 +103,17 @@ See [`step-7-deployment.md`](step-7-deployment.md).
 - Ktor: HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, CORS locked to own domain, CSP
 - Secrets via environment variables (`JWT_SECRET`, `APP_URL`)
 - Firewall: only port 443 externally exposed
+
+### Step 8 — CI Pipeline
+See [`step-8-ci.md`](step-8-ci.md).
+
+**Tool: GitHub Actions + GHCR** (both free — see step doc for cost breakdown).
+
+- On every push/PR to `main`: `./gradlew build` with Gradle cache (~2 min)
+- On push to `main` only: Docker build + push to GHCR with GHA layer cache (~3 min)
+- Image tagged as `:latest` and `:<git-sha>` for rollback support
+- `GITHUB_TOKEN` used for GHCR auth — no secrets to configure
+- Dockerfile updated with BuildKit `--mount=type=cache` for Gradle dependencies
 
 ---
 

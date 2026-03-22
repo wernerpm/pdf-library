@@ -23,6 +23,7 @@
 | API integration tests | DONE | 21 Ktor `testApplication` tests via `MainApiTest` |
 | Authentication (passkeys + JWT) | NOT STARTED | See `step-6-auth.md` |
 | Cloud deployment | NOT STARTED | See `step-7-deployment.md` |
+| CI pipeline | NOT STARTED | GitHub Actions + GHCR — see `step-8-ci.md` |
 | S3 storage backend | FUTURE | `StorageProvider` interface is ready; `S3Storage` not yet implemented |
 
 ---
@@ -72,6 +73,12 @@ WebAuthn passkeys + JWT. All API and static routes protected. No password storag
 See [`step-7-deployment.md`](implementation-plan/step-7-deployment.md).
 
 Docker + Caddy (automatic HTTPS). Security headers (HSTS, CSP, X-Frame-Options). Secrets via environment variables. Firewall: only port 443 exposed.
+
+### 7. CI Pipeline — NOT STARTED
+
+See [`step-8-ci.md`](implementation-plan/step-8-ci.md).
+
+GitHub Actions (free: 2,000 min/month, ~150 min/month at daily commits) + GHCR (currently free). Tests on every push/PR; Docker image built and pushed to GHCR on every merge to `main`.
 
 ---
 
