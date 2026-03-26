@@ -118,7 +118,11 @@ fun Application.configureAuth() {
                     JWTPrincipal(credential.payload) else null
             }
             challenge { _, _ ->
-                call.respond(HttpStatusCode.Unauthorized, ApiResponse.error("Authentication required"))
+                if (call.request.headers[HttpHeaders.Accept]?.contains("text/html") == true) {
+                    call.respondRedirect("/login")
+                } else {
+                    call.respond(HttpStatusCode.Unauthorized, ApiResponse.error("Authentication required"))
+                }
             }
         }
 
