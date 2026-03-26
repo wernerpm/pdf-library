@@ -11,6 +11,8 @@ import com.example.config.AppConfiguration
 import com.example.config.ConfigurationManager
 import com.example.repository.*
 import com.example.storage.FileSystemStorage
+import com.example.storage.S3StorageProvider
+import com.example.storage.StorageProvider
 import com.example.sync.ExtractionProgress
 import com.example.sync.SyncService
 import io.ktor.http.*
@@ -48,6 +50,7 @@ lateinit var repositoryManager: RepositoryManager
 lateinit var syncService: SyncService
 lateinit var textContentStore: TextContentStore
 lateinit var authService: AuthService
+lateinit var metadataStorage: StorageProvider
 lateinit var jwtSecret: String
 var appUrl: String? = null
 
@@ -141,8 +144,21 @@ fun Application.configureApplication() {
         try {
             logger.info("Initializing PDF Library components...")
 
-            val metadataStorage = FileSystemStorage(appConfig.metadataStoragePath)
-            logger.info("Metadata storage initialized at: ${appConfig.metadataStoragePath}")
+            val s3Bucket = appConfig.s3Bucket
+            val s3Region = appConfig.s3Region
+            metadataStorage = if (s3Bucket != null && s3Region != null) {
+                logger.info("Using S3 metadata storage: bucket=$s3Bucket, region=$s3Region")
+                S3StorageProvider(
+                    bucket = s3Bucket,
+                    region = s3Region,
+                    basePath = appConfig.metadataStoragePath,
+                    keyPrefix = appConfig.s3KeyPrefix,
+                    endpointUrl = appConfig.s3EndpointUrl
+                )
+            } else {
+                logger.info("Using filesystem metadata storage at: ${appConfig.metadataStoragePath}")
+                FileSystemStorage(appConfig.metadataStoragePath)
+            }
 
             val pdfStorage = FileSystemStorage("/")
 
@@ -168,7 +184,7 @@ fun Application.configureApplication() {
             authService = AuthService(appConfig.rpId, appConfig.rpName, authStore)
             logger.info("Auth service initialized")
 
-            syncService = SyncService(pdfStorage, appConfig, repository, textContentStore)
+            syncService = SyncService(pdfStorage, appConfig, repository, textContentStore, metadataStorage)
             syncService.addProgressListener(com.example.scanning.ConsoleScanProgressListener())
             logger.info("PDF Library Server ready!")
 
@@ -446,7 +462,7 @@ fun Application.configureRouting() {
 
             get("/api/thumbnails/{id}") {
                 try {
-                    if (!::repository.isInitialized || !::appConfig.isInitialized) {
+                    if (!::repository.isInitialized || !::metadataStorage.isInitialized) {
                         call.respond(HttpStatusCode.ServiceUnavailable, ApiResponse.error("System not ready"))
                         return@get
                     }
@@ -461,12 +477,12 @@ fun Application.configureRouting() {
                         call.respond(HttpStatusCode.NotFound, ApiResponse.error("No thumbnail available"))
                         return@get
                     }
-                    val thumbnailFile = Paths.get(appConfig.metadataStoragePath, thumbnailRelPath)
-                    if (!Files.exists(thumbnailFile)) {
+                    val thumbnailPath = Paths.get(appConfig.metadataStoragePath, thumbnailRelPath).toString()
+                    if (!metadataStorage.exists(thumbnailPath)) {
                         call.respond(HttpStatusCode.NotFound, ApiResponse.error("Thumbnail file not found"))
                         return@get
                     }
-                    call.respondBytes(Files.readAllBytes(thumbnailFile), ContentType.Image.PNG)
+                    call.respondBytes(metadataStorage.read(thumbnailPath), ContentType.Image.PNG)
                 } catch (e: Exception) {
                     logger.error("Failed to get thumbnail", e)
                     call.respond(HttpStatusCode.InternalServerError, ApiResponse.error(e.message ?: "Failed to get thumbnail"))

@@ -6,6 +6,7 @@ import com.example.metadata.MetadataExtractor
 import com.example.repository.MetadataRepository
 import com.example.repository.TextContentStore
 import com.example.scanning.*
+import com.example.storage.FileSystemStorage
 import com.example.storage.StorageProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.async
@@ -27,7 +28,8 @@ class SyncService(
     private val storageProvider: StorageProvider,
     private val configuration: AppConfiguration,
     private val repository: MetadataRepository,
-    private val textContentStore: TextContentStore? = null
+    private val textContentStore: TextContentStore? = null,
+    private val metadataStorage: StorageProvider = FileSystemStorage(configuration.metadataStoragePath)
 ) {
     private val logger = LoggerFactory.getLogger(SyncService::class.java)
     private val scanner = PDFScanner(storageProvider, configuration, repository)
@@ -38,7 +40,6 @@ class SyncService(
         maxTextContentChars = configuration.scanning.maxTextContentChars
     )
     private val batchExtractor = BatchMetadataExtractor(metadataExtractor, concurrency = 2)
-    private val metadataStorage = com.example.storage.FileSystemStorage(configuration.metadataStoragePath)
     private val manifestManager = DiscoveryManifestManager(
         storageProvider = metadataStorage,
         manifestPath = "discovery-manifest.json"

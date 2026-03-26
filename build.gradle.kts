@@ -57,6 +57,10 @@ dependencies {
     implementation("io.ktor:ktor-server-auth-jwt:3.4.0")
     implementation("com.auth0:java-jwt:4.4.0")
 
+    // AWS S3 client (optional — only used when s3Bucket config is set)
+    implementation("software.amazon.awssdk:s3:2.28.0")
+    implementation("software.amazon.awssdk:url-connection-client:2.28.0")
+
     // Testing
     testImplementation("org.junit.jupiter:junit-jupiter:5.14.2")
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")

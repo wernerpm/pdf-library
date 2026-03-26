@@ -1,6 +1,6 @@
 package com.example.auth
 
-import com.example.storage.FileSystemStorage
+import com.example.storage.StorageProvider
 import com.yubico.webauthn.CredentialRepository
 import com.yubico.webauthn.RegisteredCredential
 import com.yubico.webauthn.data.ByteArray
@@ -32,7 +32,7 @@ data class StoredCredential(
  * the synchronous CredentialRepository interface required by Yubico's library.
  * In-memory state is authoritative; disk is updated after every mutation.
  */
-class AuthStore(private val storage: FileSystemStorage) : CredentialRepository {
+class AuthStore(private val storage: StorageProvider) : CredentialRepository {
 
     private val lock = ReentrantReadWriteLock()
     private val json = Json { ignoreUnknownKeys = true }

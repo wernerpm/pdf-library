@@ -99,7 +99,7 @@ class MainApiTest {
     @BeforeTest
     fun setUp() {
         tempDir = createTempDirectory("api-test").toFile()
-        val metadataStorage = FileSystemStorage(tempDir.absolutePath)
+        metadataStorage = FileSystemStorage(tempDir.absolutePath)
 
         // Real InMemoryMetadataRepository so stats/search/cast work correctly
         val inMemRepo = InMemoryMetadataRepository(FakeBackingRepo())
